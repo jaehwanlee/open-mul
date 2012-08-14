@@ -1,0 +1,505 @@
+/*
+ *  mul_events.c: MUL event handling 
+ *  Copyright (C) 2012, Dipjyoti Saikia <dipjyoti.saikia@gmail.com>
+ *                      
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ */
+#include "mul.h"
+
+void c_worker_do_switch_del(struct c_worker_ctx *c_wrk_ctx,
+                            c_switch_t *sw);
+int  c_socket_read_nonblock_loop(int fd, void *arg, c_conn_t *conn, size_t rcv_buf_sz,
+                            void (*proc_msg)(void *, struct cbuf *),
+                            int (*get_data_len)(void *), size_t hdr_sz);
+int  c_socket_write_nonblock_loop(c_switch_t *sw UNUSED, c_conn_t *conn);
+
+
+int
+c_socket_read_nonblock_loop(int fd, void *arg, c_conn_t *conn, const size_t rcv_buf_sz,
+                            void (*proc_msg)(void *, struct cbuf *),
+                            int (*get_data_len)(void *), size_t hdr_sz) 
+{
+    ssize_t             rem, rd_sz = -1;
+    struct cbuf         *curr_b = NULL, *b = NULL;
+    uint32_t            need_bytes, c_rbuf_flag;
+    void                *h = NULL;
+
+
+    if (conn->cbuf) {
+        b = conn->cbuf;
+        need_bytes = conn->need_bytes;
+        c_rbuf_flag = conn->c_rbuf_flag;
+        if (c_rbuf_flag & C_RBUF_PART_DATA) {
+            c_rbuf_flag &= ~(C_RBUF_PART_DATA);
+            curr_b =  alloc_cbuf(0);
+            curr_b->data = b->data;
+            curr_b->tail = b->tail;
+            curr_b->end  = b->end; // check?
+        }
+    } else {
+        b = alloc_cbuf(rcv_buf_sz);
+        need_bytes = hdr_sz;
+        c_rbuf_flag = C_RBUF_STATE_BEGIN;
+    }
+
+    while (1) {
+
+        if (!cbuf_tailroom(b)) {
+            struct cbuf *new;
+            new = alloc_cbuf(need_bytes > rcv_buf_sz?need_bytes:rcv_buf_sz);
+            if (curr_b) {
+                memcpy(new->data, curr_b->data, curr_b->len);
+                curr_b->data = new->data;
+                curr_b->tail = curr_b->data + curr_b->len;                
+                curr_b->end  = new->end;
+                cbuf_put(new, curr_b->len);
+            }
+
+            free_cbuf(b);
+            b = new;
+        }
+
+        if (conn->conn_type == C_CONN_TYPE_SOCK)
+            rd_sz = recv(fd, b->tail, cbuf_tailroom(b), 0);
+        else 
+            rd_sz = read(fd, b->tail, cbuf_tailroom(b));
+        if (rd_sz <= 0) {
+            if (curr_b) {
+                c_rbuf_flag |= C_RBUF_PART_DATA; 
+                c_log_debug("Updating partial data");
+                b->data = curr_b->data;
+                b->len  = curr_b->len;
+                b->tail = curr_b->tail;
+                free(curr_b);
+            } 
+            conn->need_bytes = need_bytes;
+            conn->cbuf = b;
+            conn->c_rbuf_flag = c_rbuf_flag;
+            break;
+        }
+
+        cbuf_put(b, rd_sz);
+        rem = rd_sz;
+
+        while (rem) {
+            switch (c_rbuf_flag) {
+            case C_RBUF_STATE_BEGIN:
+                if (!curr_b) {
+                    curr_b =  alloc_cbuf(0);
+                    curr_b->data = b->tail - rem;
+                    curr_b->tail = curr_b->data;
+                    curr_b->end  = b->end; // check?
+                }
+              
+ 
+                if (rem >= need_bytes) {
+                    int data_len;
+
+                    rem -= need_bytes;
+                    h = (void *)curr_b->data;
+                    data_len = get_data_len(h);
+
+                    if (data_len > 4096) {
+                        c_log_err("Corruption detected\n");
+
+                        /* Reset internal state */
+                        free_cbuf(curr_b);
+                        free(b);
+                        conn->cbuf = NULL;
+                        return -1;
+                    }
+
+                    if (!(data_len - hdr_sz)) {
+                        cbuf_put(curr_b, need_bytes);
+                        proc_msg(arg, curr_b);
+                        free(curr_b);
+                        curr_b = NULL;
+                        need_bytes = hdr_sz;
+                    } else {
+                        c_rbuf_flag = C_RBUF_STATE_CONT;
+                        cbuf_put(curr_b, need_bytes);
+                        need_bytes = data_len - hdr_sz; 
+                    }
+                } else {
+                    need_bytes -= rem;
+                    cbuf_put(curr_b, rem);
+                    rem = 0;
+                }
+                break;
+            case C_RBUF_STATE_CONT:
+                if (rem >= need_bytes) {
+                    rem -= need_bytes;
+                    cbuf_put(curr_b, need_bytes);
+
+                    proc_msg(arg, curr_b);
+
+                    free(curr_b);
+                    curr_b = NULL;
+                    c_rbuf_flag = C_RBUF_STATE_BEGIN;
+                    need_bytes = hdr_sz;
+                } else {
+                    need_bytes -= rem;
+                    cbuf_put(curr_b, rem);
+                    rem = 0;
+                }
+                break;
+            default:
+                c_log_warn("unexpected"); 
+            }
+        }
+    }
+
+    return rd_sz;
+}
+
+
+int
+c_socket_write_nonblock_loop(c_switch_t *sw, c_conn_t *conn)
+{
+    struct cbuf *buf;
+    int         sent_sz;
+    int         err = 0;
+
+    while ((buf = cbuf_list_dequeue(&conn->tx_q))) {
+
+        sent_sz = send(conn->fd, buf->data, buf->len, MSG_NOSIGNAL);
+        if (sent_sz <= 0) {
+            cbuf_list_queue(&conn->tx_q, buf);
+            if (sent_sz == 0 || errno == EAGAIN) {
+                goto sched_tx_event;
+            }
+            c_log_err("%s:Write failed for switch(0x%llx)", FN, sw->DPID);
+            err = -1;
+            goto out;
+        }
+
+        if (sent_sz < buf->len) {
+            c_log_err("%s:Partial write for switch(0x%llx)", FN, sw->DPID);
+            cbuf_pull(buf, sent_sz);
+            cbuf_list_queue(&conn->tx_q, buf);
+            goto sched_tx_event;
+        }
+
+        free_cbuf(buf);
+    }
+
+out:
+    return err;
+
+sched_tx_event:
+    event_add(conn->wr_event, NULL);
+    return err;
+
+}
+
+static void
+c_per_sw_timer(void *arg_sw, void *arg_time)
+{
+    c_switch_t          *sw     = arg_sw;
+    struct c_worker_ctx *w_ctx  = sw->ctx;
+    uint64_t            time    = *(uint64_t *)arg_time;
+    uint64_t            time_diff;
+    c_per_thread_dat_t  *t_data = &w_ctx->thread_data;
+
+#ifdef __TEST__ 
+    int i = 0;
+    for (i=0;i<40000;i++) {
+        if (sw->switch_state == SW_REGISTERED) {
+            of_send_echo_request(sw);
+        }
+    }
+#endif
+
+    time_diff = time - sw->last_refresh_time;
+    if (time_diff > TIME_uS(30)) {
+        c_log_debug("Timing out switch_id(0x%llx)\n", sw->DPID);
+        t_data->sw_list = g_slist_remove(t_data->sw_list, sw);
+        c_worker_do_switch_del(sw->ctx, sw);
+    } else if (time_diff > TIME_uS(10)) {
+        of_send_echo_request(sw);
+    }
+
+}
+
+void
+c_per_worker_timer_event(evutil_socket_t fd UNUSED, short event UNUSED, 
+                         void *arg)
+{
+    struct c_worker_ctx *w_ctx  = arg;
+    struct timeval      tv      = { C_PER_WORKER_TIMEO, 0 };
+    c_per_thread_dat_t  *t_data = &w_ctx->thread_data;
+    uint64_t            curr_time;
+
+    curr_time = g_get_monotonic_time();
+    if (t_data->sw_list) {
+        g_slist_foreach(t_data->sw_list, c_per_sw_timer, &curr_time); 
+    }
+
+    evtimer_add(w_ctx->worker_timer_event, &tv);
+}
+ 
+void
+c_worker_ipc_read(evutil_socket_t fd, short event UNUSED, void *arg)
+{
+    struct c_cmn_ctx    *cmn_ctx  = arg;
+    ssize_t             ret;
+    c_conn_t            *conn;
+    int                 thread_idx;
+
+    switch(cmn_ctx->thread_type) {
+    case THREAD_WORKER:
+        {
+            struct c_worker_ctx *w_ctx = arg;
+            conn = &w_ctx->main_wrk_conn;
+            thread_idx = w_ctx->thread_idx;
+            break;
+        }
+    case THREAD_APP: 
+        {
+            struct c_app_ctx *app_ctx = arg;
+            conn = &app_ctx->main_wrk_conn;
+            thread_idx = app_ctx->thread_idx;
+            break;
+        }
+    default:
+        c_log_err("%s: Unhandled thread type(%u)", FN, cmn_ctx->thread_type);
+        return;
+    }
+
+   ret = c_socket_read_nonblock_loop(fd, arg, conn, CIPC_RCV_BUF_SZ,
+                                     c_ipc_msg_rcv, c_ipc_get_data_len,
+                                     sizeof(struct c_ipc_hdr));
+
+    if (c_recvd_sock_dead(ret)) {
+        c_log_warn("Thread type %u id %u ipc rd socket:DEAD", 
+                    cmn_ctx->thread_type, thread_idx);
+        event_free(conn->rd_event);
+    }
+
+    return;
+}
+
+void
+c_switch_thread_write_event(evutil_socket_t fd UNUSED, short events UNUSED, void *arg)
+{
+    c_switch_t          *sw = arg;
+
+    c_socket_write_nonblock_loop(sw, &sw->conn);
+
+}
+
+void
+c_switch_thread_tx(void *sw_arg, struct cbuf *b) 
+{
+    c_switch_t          *sw = sw_arg;
+
+    c_rw_wrlock(&sw->conn.conn_lock);
+    if (cbuf_list_queue_len(&sw->conn.tx_q)  > 10) {
+        //c_log_err("TX dropped. Receiver is slow..");
+        c_rw_unlock(&sw->conn.conn_lock);
+        free_cbuf(b);
+        return;
+    }
+
+    cbuf_list_queue(&sw->conn.tx_q, b);
+
+    if (cbuf_list_queue_len(&sw->conn.tx_q)  > 1) {
+        event_add(sw->conn.wr_event, NULL);        
+        c_rw_unlock(&sw->conn.conn_lock);
+        return;
+    }
+
+    c_socket_write_nonblock_loop(sw, &sw->conn);
+
+    c_rw_unlock(&sw->conn.conn_lock);
+}
+
+
+void
+c_switch_thread_read(evutil_socket_t fd, short events UNUSED, void *arg)
+{
+    c_switch_t          *sw = arg;
+    int                 ret;
+    struct c_worker_ctx *w_ctx = sw->ctx;
+
+    ret = c_socket_read_nonblock_loop(fd, sw, &sw->conn, OFC_RCV_BUF_SZ,
+                                      of_switch_recv_msg, of_get_data_len, 
+                                      sizeof(struct ofp_header));
+
+
+    if (c_recvd_sock_dead(ret)) {
+        c_worker_do_switch_del(w_ctx, sw);
+    } 
+
+    return;
+}
+
+void
+c_worker_do_switch_del(struct c_worker_ctx *c_wrk_ctx, 
+                       c_switch_t *sw)
+{
+    c_per_thread_dat_t  *t_data = &c_wrk_ctx->thread_data;
+
+    event_free(sw->conn.rd_event);
+    close(sw->conn.fd);
+
+    t_data->sw_list = g_slist_remove(t_data->sw_list, sw);
+
+    of_switch_del(sw);
+
+    of_switch_put(sw);
+}
+
+static int
+c_worker_do_app_add(void *ctx_arg, void *msg_arg)
+{
+    struct c_worker_ctx     *app_wrk_ctx  = ctx_arg;
+    struct c_ipc_thread_msg *msg          = msg_arg;
+    c_per_thread_dat_t      *t_data       = &app_wrk_ctx->thread_data;
+    c_app_info_t *app = NULL;
+
+    if (!(app = c_app_alloc())) {
+        return -1;
+    } 
+
+    app->app_conn.fd = msf->new_conn_fd;
+    t_data->app_list = g_slist_append(t_data->app_list, app);
+
+    return 0;
+}
+
+static int
+c_worker_do_switch_add(void *ctx_arg, void *msg_arg)
+{
+    struct c_worker_ctx     *c_wrk_ctx  = ctx_arg;
+    struct c_ipc_thread_msg *msg        = msg_arg;
+    c_per_thread_dat_t      *t_data     = &c_wrk_ctx->thread_data;
+    c_switch_t              *new_switch;
+    struct sockaddr_in      peer_addr;
+    socklen_t               peer_sz     = sizeof(peer_addr);
+
+    if (getpeername(msg->new_conn_fd, (void *)&peer_addr, &peer_sz) < 0) {
+        c_log_err("get peer failed");
+        return -1;
+    }
+
+    if (!msg->new_conn_fd_valid) {
+        c_log_err("field invalid indicated");
+        return -1;
+    }
+
+    new_switch = of_switch_alloc(c_wrk_ctx);
+
+    t_data->sw_list = g_slist_append(t_data->sw_list, new_switch);
+
+    new_switch->conn.fd =  msg->new_conn_fd;
+    snprintf(new_switch->conn.conn_str, C_CONN_DESC_SZ -1, "%s:%d", 
+             inet_ntoa(peer_addr.sin_addr), ntohs(peer_addr.sin_port));
+    new_switch->conn.rd_event = event_new(c_wrk_ctx->cmn_ctx.base,
+                                     msg->new_conn_fd,
+                                     EV_READ|EV_PERSIST,
+                                     c_switch_thread_read, new_switch);
+    new_switch->conn.wr_event = event_new(c_wrk_ctx->cmn_ctx.base,
+                                     msg->new_conn_fd,
+                                     EV_WRITE, //|EV_PERSIST,
+                                     c_switch_thread_write_event, new_switch);
+
+    event_add(new_switch->conn.rd_event, NULL);
+
+    of_send_hello(new_switch);
+
+    return 0;
+}
+
+int
+c_worker_event_new_conn(void *ctx_arg, void *msg_arg)
+{
+    struct c_cmn_ctx *c_ctx = ctx_arg;
+
+    switch(c_ctx->thread_type) {
+    case THREAD_WORKER:
+        return c_worker_do_switch_add(ctx_arg, msg_arg);
+    case THREAD_APP:
+        return c_worker_do_app_add(ctx_arg, msg_arg);
+    }
+
+    return -1;
+}
+
+static int
+c_new_conn_to_thread(struct c_main_ctx *m_ctx, int new_conn_fd)
+{
+    struct c_ipc_hdr        *ipc_hdr;
+    struct c_ipc_thread_msg *ipc_t_msg;
+    int                     thread_idx;
+
+    ipc_hdr = alloc_ipc_msg(C_IPC_THREAD, C_IPC_THREAD_NEW_CONN_FD);
+    if (!ipc_hdr) {
+        c_log_warn("ipc msg alloc failed");
+        return -1;
+    }
+
+
+    ipc_t_msg = (void *)(ipc_hdr + 1);
+    ipc_t_msg->new_conn_fd = new_conn_fd;
+    ipc_t_msg->new_conn_fd_valid = 1;
+
+    thread_idx = c_get_new_switch_worker(m_ctx);
+
+    return c_send_unicast_ipc_msg(c_tid_to_ipc_wr_fd(m_ctx, thread_idx), 
+                                  ipc_hdr);
+}
+
+void
+c_accept(evutil_socket_t listener, short event UNUSED, void *arg)
+{
+    struct c_main_ctx       *m_ctx = arg;
+    struct sockaddr_storage ss;
+    socklen_t               slen = sizeof(ss);
+    int fd                  = accept(listener, (struct sockaddr*)&ss, &slen);
+
+    c_log_debug("in accept thread");
+
+    if (fd < 0) {
+        perror("accept");
+    } else if (fd > FD_SETSIZE) {
+        close(fd);
+    } else {
+        c_make_socket_nonblocking(fd);
+        c_sock_set_recvbuf(fd, 384 *1024);
+        c_new_conn_to_thread(m_ctx, fd);
+    }
+}
+
+void
+c_app_accept(evutil_socket_t listener, short event UNUSED, void *arg)
+{
+    struct c_main_ctx       *m_ctx = arg;
+    struct sockaddr_storage ss;
+    socklen_t               slen = sizeof(ss);
+    int fd                  = accept(listener, (struct sockaddr*)&ss, &slen);
+
+    c_log_debug("in app accept thread");
+
+    if (fd < 0) {
+        perror("accept");
+    } else if (fd > FD_SETSIZE) {
+        close(fd);
+    } else {
+        c_make_socket_nonblocking(fd);
+        c_sock_set_recvbuf(fd, 384 *1024);
+        c_new_conn_to_thread(m_ctx, fd);
+    }
+}

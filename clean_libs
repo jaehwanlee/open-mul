@@ -1,0 +1,6 @@
+#!/bin/bash
+
+pushd common-libs/3rd-party/ >> /dev/null
+rm -fr libevent-2.0.18-stable
+rm -fr glib-2.32.0
+popd  >> /dev/null

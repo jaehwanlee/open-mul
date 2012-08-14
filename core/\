@@ -1,0 +1,54 @@
+/*
+ *  mul_app_interface.h: MUL application interface public headers
+ *  Copyright (C) 2012, Dipjyoti Saikia <dipjyoti.saikia@gmail.com>
+ * 
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ */
+
+#ifndef __MUL_APP_INTERFACE_H__
+#define __MUL_APP_INTERFACE_H__
+
+typedef void (*initcall_t)(void *);
+extern initcall_t __start_modinit_sec, __stop_modinit_sec;
+#define data_attr         __attribute__ ((section ("modinit_sec")))
+#define module_init(x)   initcall_t _##x data_attr = x
+
+#define MUL_OFP_VERSION             (0xfe)
+
+#define C_MAX_APP_STRLEN            64 
+
+/* Controller app event notifications */
+typedef enum c_app_event {
+    C_DP_REG,
+    C_DP_UNREG,
+    C_PORT_ADD,
+    C_PORT_DEL,
+    C_PORT_CHANGE,
+    C_PACKET_IN,
+    C_EVENT_MAX
+} c_app_event_t;
+
+
+struct ofp_switch_features {
+    struct ofp_header header;
+    uint64_t          datapath_id;
+};
+
+int mul_register_app(char *app_name, uint32_t flags, 
+                     uint32_t ev_mask, uint32_t n_sw, uint64_t *swid_list,
+                     void  (*ev_cb)(uint32_t event, void *arg));
+int mul_unregister_app(char *app_name);
+
+#endif

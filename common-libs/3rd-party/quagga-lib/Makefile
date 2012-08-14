@@ -1,0 +1,113 @@
+LTLIBRARIES = $(lib_LTLIBRARIES)
+BIN_DIR = bin
+libzebra_la_OBJECTS = ./src/network.o ./src/pid_output.o \
+					  ./src/getopt.o ./src/getopt1.o \
+					  ./src/daemon.o ./src/checksum.o \
+					  ./src/vector.o ./src/linklist.o \
+					  ./src/vty.o ./src/command.o \
+					  ./src/sockunion.o ./src/prefix.o \
+					  ./src/thread.o ./src/if.o ./src/memory.o \
+					  ./src/buffer.o ./src/table.o ./src/hash.o\
+					  ./src/filter.o ./src/routemap.o \
+					  ./src/distribute.o ./src/stream.o \
+					  ./src/str.o ./src/log.o ./src/plist.o \
+					  ./src/zclient.o ./src/sockopt.o \
+					  ./src/smux.o ./src/md5.o \
+					  ./src/if_rmap.o ./src/keychain.o \
+					  ./src/privs.o ./src/sigevent.o \
+					  ./src/pqueue.o ./src/jhash.o \
+					  ./src/memtypes.o ./src/workqueue.o
+CC = gcc
+AR = ar
+libzebra_la_LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
+	$(libzebra_la_LDFLAGS) $(LDFLAGS) -o $@
+DEFAULT_INCLUDES = -I. 
+am__mv = mv -f
+COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
+	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
+LTCOMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
+CCLD = $(CC)
+LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
+
+CFLAGS = -Os -fno-omit-frame-pointer -g -std=gnu99 -Wall -Wsign-compare -Wpointer-arith -Wbad-function-cast -Wwrite-strings -Wmissing-prototypes -Wmissing-declarations -Wchar-subscripts -Wcast-qual
+
+CPPFLAGS = 
+CYGPATH_W = echo
+DEFS = -DHAVE_CONFIG_H -DSYSCONFDIR=\"$(sysconfdir)/\"
+DEPDIR = .deps
+GAWK = gawk
+INCLUDES =  -I.. -I./src -I./include
+LDFLAGS = 
+OBJEXT = o
+SHELL = /bin/bash
+exec_prefix = ${prefix}
+mkdir_p = /bin/mkdir -p
+prefix = /usr/local
+srcdir = ./src
+sysconfdir = ${prefix}/etc
+lib_LTLIBRARIES = $(BIN_DIR)/libzebra.a
+
+BUILT_SOURCES = memtypes.h route_types.h
+libzebra_la_DEPENDENCIES = 
+libzebra_la_LIBADD = 
+EXTRA_DIST = regex.c regex-gnu.h memtypes.awk route_types.awk route_types.txt
+all: $(BUILT_SOURCES) all-am
+
+.SUFFIXES:
+.SUFFIXES: .c .lo .o .obj
+
+$(BIN_DIR)/libzebra.a: $(libzebra_la_OBJECTS) $(libzebra_la_DEPENDENCIES) 
+	$(AR) -r $@ $(libzebra_la_OBJECTS) $(libzebra_la_LIBADD) $(LIBS)
+
+mostlyclean-compile:
+	-rm -f ./src/*.$(OBJEXT)
+
+.c.o:
+	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
+	$(am__mv) $(DEPDIR)/$*.Tpo $(DEPDIR)/$*.Po
+
+all-am: $(LTLIBRARIES)
+
+mostlyclean-generic:
+
+clean-generic:
+	rm -f ./$(DEPDIR)/src/*.Po
+	rm -f ./src/*.o
+	rm -f $(BIN_DIR)/*
+
+clean: clean-am
+
+clean-am: clean-generic \
+	mostlyclean-am
+
+html: html-am
+
+html-am:
+
+info: info-am
+
+info-am:
+
+mostlyclean: mostlyclean-am
+
+mostlyclean-am: mostlyclean-compile mostlyclean-generic 
+
+.MAKE: all
+
+.PHONY: CTAGS all all-am clean clean-generic \
+	html html-am info info-am \
+	mostlyclean \
+	mostlyclean-compile mostlyclean-generic \
+	pdf pdf-am ps ps-am
+
+memtypes.h: $(srcdir)/memtypes.c $(srcdir)/memtypes.awk
+	($(GAWK) -f $(srcdir)/memtypes.awk $(srcdir)/memtypes.c > ./include/$@)
+
+route_types.h: $(srcdir)/route_types.txt $(srcdir)/route_types.awk
+	($(GAWK) -f $(srcdir)/route_types.awk $(srcdir)/route_types.txt > ./include/$@)
+
+# Tell versions [3.59,3.63) of GNU make to not export all variables.
+# Otherwise a system limit (for SysV at least) may be exceeded.
+.NOEXPORT:
