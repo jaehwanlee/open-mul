@@ -1,3 +1,20 @@
+SHELL = /bin/sh
+VPATH = @srcdir@
+
+subdirs = @subdirs@
+top_srcdir = @top_srcdir@
+srcdir = @srcdir@
+prefix = @prefix@
+infodir = $(prefix)/info
+libdir = $(prefix)/lib/gnudl
+mandir = $(prefix)/man/man1
+
+CC = @CC@
+CPPFLAGS = @CPPFLAGS@
+CFLAGS = $(CPPFLAGS) @CFLAGS@
+LDFLAGS = @LDFLAGS@
+LIBS = @LIBS@
+
 LTLIBRARIES = $(lib_LTLIBRARIES)
 BIN_DIR = bin
 libzebra_la_OBJECTS = ./src/network.o ./src/pid_output.o \
@@ -11,7 +28,7 @@ libzebra_la_OBJECTS = ./src/network.o ./src/pid_output.o \
 					  ./src/filter.o ./src/routemap.o \
 					  ./src/distribute.o ./src/stream.o \
 					  ./src/str.o ./src/log.o ./src/plist.o \
-					  ./src/zclient.o ./src/sockopt.o \
+					  ./src/sockopt.o \
 					  ./src/smux.o ./src/md5.o \
 					  ./src/if_rmap.o ./src/keychain.o \
 					  ./src/privs.o ./src/sigevent.o \
@@ -107,6 +124,23 @@ memtypes.h: $(srcdir)/memtypes.c $(srcdir)/memtypes.awk
 
 route_types.h: $(srcdir)/route_types.txt $(srcdir)/route_types.awk
 	($(GAWK) -f $(srcdir)/route_types.awk $(srcdir)/route_types.txt > ./include/$@)
+
+# automatic re-running of configure if the ocnfigure.in file has changed
+${srcdir}/configure: configure.in aclocal.m4
+	cd ${srcdir} && autoconf
+
+# autoheader might not change config.h.in, so touch a stamp file
+${srcdir}/config.h.in: stamp-h.in
+${srcdir}/stamp-h.in: configure.in aclocal.m4
+	cd ${srcdir} && autoheader
+	echo timestamp > ${srcdir}/stamp-h.in
+
+config.h: stamp-h
+stamp-h: config.h.in config.status
+	./config.status
+Makefile: Makefile.in config.status
+	./config.status
+config.status: configure
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

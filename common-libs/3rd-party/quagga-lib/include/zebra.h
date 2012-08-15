@@ -33,10 +33,6 @@ typedef unsigned short  u_int16_t;
 typedef unsigned char   u_int8_t;
 #endif /* SUNOS_5 */
 
-#ifndef HAVE_SOCKLEN_T
-typedef int socklen_t;
-#endif /* HAVE_SOCKLEN_T */
-
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -385,6 +381,52 @@ struct in_pktinfo
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
+
+/* Mask for config files */
+#define CONFIGFILE_MASK 0600
+
+/* Consumed Time Check */
+#define CONSUMED_TIME_CHECK 5000000
+
+/* daemon vty directory */
+#define DAEMON_VTY_DIR "/var/run"
+
+
+#define PATH_BGPD_PID "/var/run/bgpd.pid"
+
+/* isisd PID */
+#define PATH_ISISD_PID "/var/run/isisd.pid"
+
+/* ospf6d PID */
+#define PATH_OSPF6D_PID "/var/run/ospf6d.pid"
+
+/* ospfd PID */
+#define PATH_OSPFD_PID "/var/run/ospfd.pid"
+
+/* ripd PID */
+#define PATH_RIPD_PID "/var/run/ripd.pid"
+
+/* ripngd PID */
+#define PATH_RIPNGD_PID "/var/run/ripngd.pid"
+
+/* watchquagga PID */
+#define PATH_WATCHQUAGGA_PID "/var/run/watchquagga.pid"
+
+/* zebra PID */
+#define PATH_ZEBRA_PID "/var/run/zebra.pid"
+
+/* Quagga Group */
+#define QUAGGA_GROUP "quagga"
+
+/* Hide deprecated interfaces */
+#define QUAGGA_NO_DEPRECATED_INTERFACES 1
+
+/* Quagga User */
+#define QUAGGA_USER "quagga"
+
+#define LOGFILE_MASK 0600
+
+#define HAVE_STRUCT_IP_MREQN_IMR_IFINDEX 1
 
 /* For old definition. */
 #ifndef IN6_ARE_ADDR_EQUAL

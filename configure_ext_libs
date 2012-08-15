@@ -5,7 +5,7 @@ tar -xvzf libevent-2.0.18-stable.tar.gz
 tar -xvzf glib-2.32.0.tar.gz
 popd  >> /dev/null
 pushd common-libs/3rd-party/libevent-2.0.18-stable/ >> /dev/null
-./configure && make
+./configure #&& make
 popd  >> /dev/null
 #pushd ./common-libs/3rd-party/derived-lib >> /dev/null
 #make 
@@ -18,5 +18,5 @@ popd  >> /dev/null
 #popd >> /dev/null
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
 pushd common-libs/3rd-party/glib-2.32.0/ >> /dev/null 
-./configure && make
+./configure #&& make
 popd

@@ -1,4 +1,13 @@
+SHELL = /bin/sh
+VPATH = @srcdir@
 
+subdirs = @subdirs@
+top_srcdir = @top_srcdir@
+srcdir = @srcdir@
+prefix = @prefix@
+infodir = $(prefix)/info
+libdir = $(prefix)/lib/gnudl
+mandir = $(prefix)/man/man1
 
 GLIB_SRC_PATH=$(TOP)/common-libs/3rd-party/glib-2.32.0/
 GLIB_PATH=$(TOP)/common-libs/3rd-party/glib-2.32.0/glib/.libs/
@@ -119,6 +128,23 @@ mostlyclean-am: mostlyclean-compile mostlyclean-generic
 	mostlyclean \
 	mostlyclean-compile mostlyclean-generic common-libs \
 	pdf pdf-am ps ps-am
+
+# automatic re-running of configure if the ocnfigure.in file has changed
+${srcdir}/configure: configure.in aclocal.m4
+	cd ${srcdir} && autoconf
+
+# autoheader might not change config.h.in, so touch a stamp file
+${srcdir}/config.h.in: stamp-h.in
+${srcdir}/stamp-h.in: configure.in aclocal.m4
+	cd ${srcdir} && autoheader
+	echo timestamp > ${srcdir}/stamp-h.in
+
+config.h: stamp-h
+stamp-h: config.h.in config.status
+	./config.status
+Makefile: Makefile.in config.status
+	./config.status
+config.status: configure
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

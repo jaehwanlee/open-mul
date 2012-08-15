@@ -1,7 +1,24 @@
+SHELL = /bin/sh
+VPATH = @srcdir@
+
+subdirs = @subdirs@
+top_srcdir = @top_srcdir@
+srcdir = @srcdir@
+prefix = @prefix@
+infodir = $(prefix)/info
+libdir = $(prefix)/lib/gnudl
+mandir = $(prefix)/man/man1
+
+CC = @CC@
+CPPFLAGS = @CPPFLAGS@
+CFLAGS = $(CPPFLAGS) @CFLAGS@
+LDFLAGS = @LDFLAGS@
+LIBS = @LIBS@
+INSTALL = @INSTALL@
+
 LTLIBRARIES = $(lib_LTLIBRARIES)
 BIN_DIR = bin
-libutil_la_OBJECTS = ./src/random.o ./src/hash.o \
-                     ./src/clog.o
+libmulutil_la_OBJECTS = ./src/cbuf.o ./src/c_util.o  ./src/idx_pool.o
 CC = gcc
 AR = ar
 DEFAULT_INCLUDES = -I./include/
@@ -30,10 +47,10 @@ mkdir_p = /bin/mkdir -p
 prefix = /usr/local
 srcdir = ./quagga-lib/src
 sysconfdir = ${prefix}/etc
-lib_LTLIBRARIES = $(BIN_DIR)/libutil.a
+lib_LTLIBRARIES = $(BIN_DIR)/libmulutil.a
 BUILT_SOURCES =
-libutil_la_DEPENDENCIES = 
-libutil_la_LIBADD = 
+libmulutil_la_DEPENDENCIES = 
+libmulutil_la_LIBADD = 
 
 EXTRA_DIST =
 all: $(BUILT_SOURCES) all-am
@@ -41,8 +58,8 @@ all: $(BUILT_SOURCES) all-am
 .SUFFIXES:
 .SUFFIXES: .c .lo .o .obj
 
-$(BIN_DIR)/libutil.a: $(libutil_la_OBJECTS) $(libutil_la_DEPENDENCIES) 
-	$(AR) -r $@ $(libutil_la_OBJECTS) $(libutil_la_LIBADD) $(LIBS)
+$(BIN_DIR)/libmulutil.a: $(libmulutil_la_OBJECTS) $(libmulutil_la_DEPENDENCIES) 
+	$(AR) -r $@ $(libmulutil_la_OBJECTS) $(libmulutil_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f ./src/*.$(OBJEXT)
@@ -84,6 +101,24 @@ mostlyclean-am: mostlyclean-compile mostlyclean-generic
 	mostlyclean \
 	mostlyclean-compile mostlyclean-generic \
 	pdf pdf-am ps ps-am
+
+# automatic re-running of configure if the ocnfigure.in file has changed
+${srcdir}/configure: configure.in aclocal.m4
+	cd ${srcdir} && autoconf
+
+# autoheader might not change config.h.in, so touch a stamp file
+${srcdir}/config.h.in: stamp-h.in
+${srcdir}/stamp-h.in: configure.in aclocal.m4
+	cd ${srcdir} && autoheader
+	echo timestamp > ${srcdir}/stamp-h.in
+
+config.h: stamp-h
+stamp-h: config.h.in config.status
+	./config.status
+Makefile: Makefile.in config.status
+	./config.status
+config.status: configure
+
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

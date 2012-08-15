@@ -19,6 +19,7 @@
 #ifndef __MUL_H__
 #define __MUL_H__
 
+#include "config.h"
 #include "mul_common.h"
 
 #include "mul_events.h"

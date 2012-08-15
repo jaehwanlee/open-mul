@@ -1,47 +1,58 @@
- How to build MUL Controller ?
+ How to build MUL Controller on Ubuntu ?
 
-1. Build environment
+1. Get necessary packages 
 
-    For Ubuntu 10.04.3 LTS, the following packages should be installed :
+    a) For Ubuntu 10.04.3 LTS, the following packages should be installed :
    
-    > sudo apt-get install flex bison libwxgtk2.6-dev build-essential expect g++-multilib tofrodos zlib1g-dev gawk
+       > sudo apt-get install flex bison libwxgtk2.6-dev build-essential 
+         expect g++-multilib tofrodos zlib1g-dev gawk
 
-    It is not tested with more recent ubuntu versions but should work as well.
+       Not verified with recent ubuntu versions but should work fine.
 
-2. Source libffi 
+    b) Source libffi package
 
-    libffi is required by glib which is one of the libs used by MUL. It is recommended that libffi be compiled
-    and installed by hand if it does not exist in the build system. Can confirm by : find /usr/lib | grep libffi OR find /usr/local/lib | grep libffi 
+       libffi is required by glib which is one of the libs used by MUL. It is 
+       recommended that libffi be compiled and installed by hand if it does not
+       exist in the build system. Can confirm by : find /usr/lib | grep libffi 
+       OR find /usr/local/lib | grep libffi 
 
-    Steps to build libffi (if it does not exist):
-    i) Download from http://sourceware.org/libffi/ or simply use  <mul-dir>/common_libs/3rd_party/libffi-3.0.11.tar.gz
-    ii) Unzip the src tarball 
-    iii) cd <liffi-dir>; ./configure; make install;
+       Steps to build libffi (if it does not exist):
+         i) Download from http://sourceware.org/libffi/ or simply use the one 
+            in <mul-dir>/common_libs/3rd_party/libffi-3.0.11.tar.gz
+        ii) Unzip the src tarball 
+       iii) cd <liffi-dir>; ./configure; make install;
 
-3. [Optional for performance] Install google's tcmalloc  
+    c) [Optional for performance] Install google's tcmalloc  
 
-    > sudo apt-get install libtcmalloc-minimal0
+       > sudo apt-get install libtcmalloc-minimal0
     
-    Before running MuL,  execute the following :
+       Before running MuL,  execute the following :
  
-    > export LD_PRELOAD=/usr/lib/libtcmalloc_minimal.so.0
+       > export LD_PRELOAD=/usr/lib/libtcmalloc_minimal.so.0
 
-4. ./configure_libs 
+2. Select module build options
+
+    Open <mul-dir>/.config
+    
+   Select how you want to build the apps. Currently there is only one application
+   ie l2switch so not much of a choice in number of apps. But, you can select how
+   to build a module by editing .config:
+
+    <module-name>=y     : The module will be built separately and run as a 
+                          separate process [Preffered Mode]
+
+    <module-name>=m     : The module will be built as a module and run on top of 
+                          controller as part of same process.
+
+3. Build MuL
+
+   > ./configure
+   > make common-libs
+   > make 
 
    This might take a few minutes.
 
-5. Open <mul-dir>/.config
-    
-   Select application features you want. Currently there is only one application ie l2switch so not much of a choice. 
-   You can select different options to build a module by editing .config:
-
-    <module-name>=y     : The module will be built separately and run as a separate process [Preffered Mode]
-
-    <module-name>=m     : The module will be built as a module and run on top of controller as part of same process.
-
-6. make
-
-7. Executable in bin/mul.bin
+4. Executable will be built as bin/mul.bin
 
    - You need to run using sudo or as admin.
 
@@ -50,11 +61,12 @@
             -S <n>  : Num of switch threads
             -A <n>  : Num of app threads
 
-8. [Optional if you opt for modules  to run as a separate process]
+5. [Optional if you opt for modules  to run as a separate process]
 
     Go to application directory and make opted for application
 
     > cd applications/l2switch
+    > ./configure 
     > make clean; make
     
-    Executable in mul-l2sw.bin
+    Executable :  mul-l2sw.bin

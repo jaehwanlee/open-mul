@@ -30,15 +30,14 @@
  * advertising or publicity pertaining to the Software or any
  * derivatives without specific, written prior permission.
  */
-
-#include "stdio.h"
-#include "stdbool.h"
-#include "random.h"
+#include "config.h"
+#include <stdio.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/time.h>
 
-//#include "c_util.h"
+#include "random.h"
 
 void
 random_init(void)

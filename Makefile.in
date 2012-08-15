@@ -1,16 +1,33 @@
+SHELL = /bin/bash
+VPATH = @srcdir@
+
+subdirs = @subdirs@
+top_srcdir = @top_srcdir@
+srcdir = @srcdir@
+prefix = @prefix@
+infodir = $(prefix)/info
+libdir = $(prefix)/lib/gnudl
+mandir = $(prefix)/man/man1
+sysconfdir = ${prefix}/etc
+
+CC = @CC@
+CPPFLAGS = @CPPFLAGS@
+CFLAGS = $(CPPFLAGS) @CFLAGS@
+LDFLAGS = @LDFLAGS@
+LIBS = @LIBS@
 
 include .config
 
 SYSROOT=/
 BIN_DIR = bin
-OBJECTS= core/mul_main.o \
-         core/mul_events.o \
-         core/mul_ipc.o \
-         core/mul_thread_core.o \
-         core/mul_of.o \
-         core/mul_app_interface.o \
-         core/mul_fp.o  \
-         core/mul_vty.o \
+OBJECTS= mul-core/mul_main.o \
+         mul-core/mul_events.o \
+         mul-core/mul_ipc.o \
+         mul-core/mul_thread_core.o \
+         mul-core/mul_of.o \
+         mul-core/mul_app_interface.o \
+         mul-core/mul_fp.o  \
+         mul-core/mul_vty.o \
          common/mul_of_msg.o
 
 
@@ -45,23 +62,18 @@ DEFS = -DHAVE_CONFIG_H -DSYSCONFDIR=\"$(sysconfdir)/\"
 DEPDIR = .
 GAWK = gawk
 INCLUDES   = -I./common-libs/3rd-party/derived-lib/include/ \
-			 -I./common-libs/3rd-party/quagga-lib/include/ \
+             -I./common-libs/3rd-party/quagga-lib/include/ \
              -I./common-libs/mul-lib/include/ \
-			 -I./core/ \
-			 -I./common/ \
-			 -I$(LIBEVENT_SRC_PATH)/include/ \
-			 -I$(GLIB_SRC_PATH)/glib/ \
-			 -I$(GLIB_SRC_PATH) \
-             -L$(GLIB_PATH) \
-             -L$(LIBEVENT_PATH)
+             -I./mul-core/ \
+             -I./common/ \
+             -I./common-libs/3rd-party/libevent-2.0.18-stable/include/ \
+             -I./common-libs/3rd-party/glib-2.32.0/glib/ \
+             -I./common-libs/3rd-party/glib-2.32.0 \
+             -L./common-libs/3rd-party/glib-2.32.0/glib/.libs \
+             -L./common-libs/3rd-party/libevent-2.0.18-stable/.libs
+
 LDFLAGS = 
 OBJEXT = o
-SHELL = /bin/bash
-exec_prefix = ${prefix}
-mkdir_p = /bin/mkdir -p
-prefix = /usr/local
-#srcdir = ./lib
-sysconfdir = ${prefix}/etc
 lib_LTLIBRARIES  = ./common-libs/3rd-party/derived-lib/bin/libutil.a  \
                    ./common-libs/3rd-party/quagga-lib/bin/libzebra.a \
                    ./common-libs/mul-lib/bin/libmulutil.a
@@ -75,8 +87,8 @@ all: all-am
 .SUFFIXES: .c .lo .o .obj
 
 mostlyclean-compile:
-	-rm -f ./core/*.$(OBJEXT)
-	@-rm -f ./core/*.Po
+	-rm -f ./mul-core/*.$(OBJEXT)
+	@-rm -f ./mul-core/*.Po
 	-rm -f ./common/*.$(OBJEXT)
 	@-rm -f ./common/*.Po
 	-rm -f ./application/topo_routing/*.$(OBJEXT)
@@ -85,11 +97,15 @@ mostlyclean-compile:
 	@-rm -f ./application/l2switch/*.Po
 
 common-libs:
+	@pushd common-libs/3rd-party/libevent-2.0.18-stable/; make; popd;   
+	@pushd common-libs/3rd-party/glib-2.32.0/glib; make; popd;
 	@pushd ./common-libs/3rd-party/derived-lib; make; popd
 	@pushd ./common-libs/3rd-party/quagga-lib; make; popd
 	@pushd ./common-libs/mul-lib; make; popd
 
 clean-common-libs:
+	@pushd common-libs/3rd-party/libevent-2.0.18-stable/; make clean; popd;   
+	@pushd common-libs/3rd-party/glib-2.32.0/glib; make clean; popd;
 	@pushd ./common-libs/3rd-party/derived-lib; make clean; popd
 	@pushd ./common-libs/3rd-party/quagga-lib; make clean; popd
 	@pushd ./common-libs/mul-lib; make clean; popd
