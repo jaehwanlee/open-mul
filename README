@@ -39,7 +39,7 @@
    to build a module by editing .config:
 
     <module-name>=y     : The module will be built separately and run as a 
-                          separate process [Preffered Mode]
+                          separate process [Preferred Mode]
 
     <module-name>=m     : The module will be built as a module and run on top of 
                           controller as part of same process.
