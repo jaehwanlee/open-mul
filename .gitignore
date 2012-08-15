@@ -1,0 +1,8 @@
+*.Po
+*.o
+tags
+*.a
+config.log
+config.status
+.gitignore
+*.bin

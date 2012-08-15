@@ -44,6 +44,9 @@ PROGRAM = $(BIN_DIR)/mul.bin
 CC=gcc
 AR=ar
 
+GLIB_PATH=./common-libs/3rd-party/glib-2.32.0/glib/.libs
+LIBEVENT_PATH=./common-libs/3rd-party/libevent-2.0.18-stable/.libs
+
 DEFAULT_INCLUDES = -I./ 
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
