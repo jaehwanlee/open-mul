@@ -26,21 +26,20 @@
 #define C_IPC_APP_PATH              "/var/run/cipc_app_x"
 #define C_PER_WORKER_TIMEO          1
 
-#define C_VTY_PORT 	                7000
-#define C_PID_PATH		            "/var/run/mul.pid"
+#define C_VTY_PORT                  7000
+#define C_PID_PATH                  "/var/run/mul.pid"
 #define C_VTYSH_PATH 	            "/var/run/mul.vty"
 
 #define OFP_PRINT_MAX_STRLEN        256*4
-#define	OFSW_MAX_PORTS			    65536	
-#define OFC_SUCCESS					0
-#define OFC_FAIL					-1
-#define OFC_SW_TIMER				20
-#define OFC_SW_HASHTBL_SIZE			1024
-#define true						1
-#define false						0
-#define OFC_SW_PORT_VALID			true
-#define OFC_SW_PORT_INVALID 		false
-#define OFC_SW_PORT_INFO_DIRTY		0x80000000
+#define	OFSW_MAX_PORTS              65536	
+#define OFC_SUCCESS                 0
+#define OFC_FAIL                    -1
+#define OFC_SW_TIME                 20
+#define true                        1
+#define false                       0
+#define OFC_SW_PORT_VALID           true
+#define OFC_SW_PORT_INVALID         false
+#define OFC_SW_PORT_INFO_DIRTY      0x80000000
 #define OFC_RCV_BUF_SZ              4096 
 #define CIPC_RCV_BUF_SZ             512
 
@@ -214,9 +213,9 @@ struct c_switch
 {
     void                    *ctx __aligned;   
     struct c_switch_fp_ops  fp_ops; 
- 	ctrl_hdl_t			    *c_hdl;         /* controller handle */ 
+    ctrl_hdl_t              *c_hdl;         /* controller handle */ 
 #define DPID datapath_id
-	unsigned long long int 	datapath_id;	/* DP id */
+    unsigned long long int  datapath_id;	/* DP id */
     c_flow_tbl_t            exm_flow_tbl;
 #define C_RULE_FLOW_TBL_DFL   0
 #define C_MAX_RULE_FLOW_TBLS  1
@@ -231,10 +230,9 @@ struct c_switch
     uint64_t                last_refresh_time;
     uint64_t                last_sample_time;
 
-	c_sw_ports_t			ports[OFSW_MAX_PORTS];
+    c_sw_ports_t            ports[OFSW_MAX_PORTS];
 
-	c_switch_state_t        switch_state;   /* switch connection state */
-	uint32_t 				query_xid;     /* XID used for query. */
+    c_switch_state_t        switch_state;   /* switch connection state */
 
     uint32_t                n_buffers;     /* Max packets buffered at once. */
     uint8_t                 version;       /* OFP version */
