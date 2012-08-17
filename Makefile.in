@@ -94,9 +94,7 @@ mostlyclean-compile:
 	@-rm -f ./mul-core/*.Po
 	-rm -f ./common/*.$(OBJEXT)
 	@-rm -f ./common/*.Po
-	-rm -f ./application/topo_routing/*.$(OBJEXT)
-	@-rm -f ./application/topo_routing/*.Po
-	-rm -f ./application/l2switch/*.$(OBJEXT)
+	@-rm -f ./application/l2switch/*.$(OBJEXT)
 	@-rm -f ./application/l2switch/*.Po
 
 common-libs:
