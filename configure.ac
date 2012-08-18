@@ -42,11 +42,6 @@ AC_CHECK_HEADERS([stropts.h sys/ksym.h sys/times.h sys/select.h \
     sys/param.h limits.h signal.h \
     sys/socket.h netinet/in.h time.h sys/time.h])
 
-AC_CHECK_HEADERS([stropts.h sys/ksym.h sys/times.h sys/select.h \
-    sys/types.h linux/version.h netdb.h asm/types.h \
-    sys/param.h limits.h signal.h \
-    sys/socket.h netinet/in.h time.h sys/time.h])
-
 # Checks for library functions.
 AC_FUNC_MALLOC
 AC_CHECK_FUNCS([inet_ntoa memset mkfifo strrchr strtoul strtoull])
