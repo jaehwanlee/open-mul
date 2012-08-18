@@ -68,7 +68,7 @@ fi
 AC_ARG_VAR([GAWK],[GNU AWK])
 
 if test "$GCC" = "yes" ; then
-    CFLAGS="$CFLAGS -O2 -Wall -Wno-sign-compare -Wpointer-arith -Wdeclaration-after-statement -Wformat-security -Wswitch-enum -Wunused-parameter -Wstrict-aliasing -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes -Wmissing-field-initializers -Wno-override-init"
+    CFLAGS="$CFLAGS -O2 -Wall -Wno-sign-compare -Wpointer-arith -Wdeclaration-after-statement -Wformat-security -Wunused-parameter -Wstrict-aliasing -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes -Wmissing-field-initializers -Wno-override-init"
     CFLAGS="$CFLAGS -fno-strict-aliasing"
 else
   AC_MSG_ERROR([GCC/ICC is required by mul]) 
