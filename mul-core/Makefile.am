@@ -21,7 +21,7 @@ DEFS = @DEFS@ -DSYSCONFDIR=\"$(sysconfdir)/\"
 mul_SOURCES = mul_app_interface.c mul_fp.c mul_main.c mul_thread_core.c \
               mul_events.c mul_ipc.c mul_of.c mul_vty.c ../common/mul_of_msg.c
 
-if !HAVE_L2SW_MODULE 
+if HAVE_L2SW_MODULE 
 mul_SOURCES += $(top_srcdir)/application/l2switch/l2switch.c 
 endif
 

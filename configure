@@ -11858,23 +11858,6 @@ fi
 done
 
 
-for ac_header in stropts.h sys/ksym.h sys/times.h sys/select.h \
-    sys/types.h linux/version.h netdb.h asm/types.h \
-    sys/param.h limits.h signal.h \
-    sys/socket.h netinet/in.h time.h sys/time.h
-do :
-  as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
-ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
-if eval test \"x\$"$as_ac_Header"\" = x"yes"; then :
-  cat >>confdefs.h <<_ACEOF
-#define `$as_echo "HAVE_$ac_header" | $as_tr_cpp` 1
-_ACEOF
-
-fi
-
-done
-
-
 # Checks for library functions.
 for ac_header in stdlib.h
 do :

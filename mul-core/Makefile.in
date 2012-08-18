@@ -36,7 +36,7 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 bin_PROGRAMS = mul$(EXEEXT)
-@HAVE_L2SW_MODULE_FALSE@am__append_1 = $(top_srcdir)/application/l2switch/l2switch.c 
+@HAVE_L2SW_MODULE_TRUE@am__append_1 = $(top_srcdir)/application/l2switch/l2switch.c 
 @HAVE_EXT_GLIB_FALSE@am__append_2 = -Wl,-rpath=$(LIB_GLIB) -L$(LIB_GLIB)
 @HAVE_EXT_LIBEVENT_FALSE@am__append_3 = -Wl,-rpath=$(LIB_EVENT) -L$(LIB_EVENT)
 subdir = mul-core
@@ -59,7 +59,7 @@ am__mul_SOURCES_DIST = mul_app_interface.c mul_fp.c mul_main.c \
 	mul_thread_core.c mul_events.c mul_ipc.c mul_of.c mul_vty.c \
 	../common/mul_of_msg.c \
 	$(top_srcdir)/application/l2switch/l2switch.c
-@HAVE_L2SW_MODULE_FALSE@am__objects_1 = l2switch.$(OBJEXT)
+@HAVE_L2SW_MODULE_TRUE@am__objects_1 = l2switch.$(OBJEXT)
 am_mul_OBJECTS = mul_app_interface.$(OBJEXT) mul_fp.$(OBJEXT) \
 	mul_main.$(OBJEXT) mul_thread_core.$(OBJEXT) \
 	mul_events.$(OBJEXT) mul_ipc.$(OBJEXT) mul_of.$(OBJEXT) \
