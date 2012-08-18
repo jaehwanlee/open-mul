@@ -35,7 +35,7 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-subdir = common-libs/mul-lib
+subdir = common-libs/3rd-party/derived-lib
 DIST_COMMON = $(pkginclude_HEADERS) $(srcdir)/Makefile.am \
 	$(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -72,9 +72,9 @@ am__base_list = \
   sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
 am__installdirs = "$(DESTDIR)$(libdir)" "$(DESTDIR)$(pkgincludedir)"
 LTLIBRARIES = $(lib_LTLIBRARIES)
-libmulutil_la_LIBADD =
-am_libmulutil_la_OBJECTS = cbuf.lo c_util.lo idx_pool.lo
-libmulutil_la_OBJECTS = $(am_libmulutil_la_OBJECTS)
+libutil_la_LIBADD =
+am_libutil_la_OBJECTS = random.lo hash.lo clog.lo
+libutil_la_OBJECTS = $(am_libutil_la_OBJECTS)
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)/common
 depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__depfiles_maybe = depfiles
@@ -88,8 +88,8 @@ CCLD = $(CC)
 LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-SOURCES = $(libmulutil_la_SOURCES)
-DIST_SOURCES = $(libmulutil_la_SOURCES)
+SOURCES = $(libutil_la_SOURCES)
+DIST_SOURCES = $(libutil_la_SOURCES)
 HEADERS = $(pkginclude_HEADERS)
 ETAGS = etags
 CTAGS = ctags
@@ -212,12 +212,15 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 INCLUDES = -I./include -I$(top_srcdir)/common
-lib_LTLIBRARIES = libmulutil.la
-libmulutil_la_SOURCES = \
-    ./src/cbuf.c ./src/c_util.c  ./src/idx_pool.c
+lib_LTLIBRARIES = libutil.la
+libutil_la_SOURCES = \
+  ./src/random.c ./src/hash.c ./src/clog.c 
 
 pkginclude_HEADERS = \
-    ./include/atomic.h  ./include/cbuf.h  ./include/compiler.h  ./include/c_util.h  ./include/idx_pool.h  ./include/lock.h
+    ./include/nicira-ext.h ./include/openflow-netlink.h ./include/random.h    \
+    ./include/clog.h ./include/openflow-ext.h ./include/packets.h \
+    ./include/hash.h ./include/openflow.h ./include/private-ext.h \
+    ./include/xtoxll.h
 
 all: all-am
 
@@ -232,9 +235,9 @@ $(srcdir)/Makefile.in:  $(srcdir)/Makefile.am  $(am__configure_deps)
 	      exit 1;; \
 	  esac; \
 	done; \
-	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu common-libs/mul-lib/Makefile'; \
+	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu common-libs/3rd-party/derived-lib/Makefile'; \
 	$(am__cd) $(top_srcdir) && \
-	  $(AUTOMAKE) --gnu common-libs/mul-lib/Makefile
+	  $(AUTOMAKE) --gnu common-libs/3rd-party/derived-lib/Makefile
 .PRECIOUS: Makefile
 Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	@case '$?' in \
@@ -284,8 +287,8 @@ clean-libLTLIBRARIES:
 	  echo "rm -f \"$${dir}/so_locations\""; \
 	  rm -f "$${dir}/so_locations"; \
 	done
-libmulutil.la: $(libmulutil_la_OBJECTS) $(libmulutil_la_DEPENDENCIES) 
-	$(LINK) -rpath $(libdir) $(libmulutil_la_OBJECTS) $(libmulutil_la_LIBADD) $(LIBS)
+libutil.la: $(libutil_la_OBJECTS) $(libutil_la_DEPENDENCIES) 
+	$(LINK) -rpath $(libdir) $(libutil_la_OBJECTS) $(libutil_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -293,9 +296,9 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/c_util.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cbuf.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/idx_pool.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/clog.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hash.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/random.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -318,26 +321,26 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LTCOMPILE) -c -o $@ $<
 
-cbuf.lo: ./src/cbuf.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT cbuf.lo -MD -MP -MF $(DEPDIR)/cbuf.Tpo -c -o cbuf.lo `test -f './src/cbuf.c' || echo '$(srcdir)/'`./src/cbuf.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/cbuf.Tpo $(DEPDIR)/cbuf.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/cbuf.c' object='cbuf.lo' libtool=yes @AMDEPBACKSLASH@
+random.lo: ./src/random.c
+@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT random.lo -MD -MP -MF $(DEPDIR)/random.Tpo -c -o random.lo `test -f './src/random.c' || echo '$(srcdir)/'`./src/random.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/random.Tpo $(DEPDIR)/random.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/random.c' object='random.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o cbuf.lo `test -f './src/cbuf.c' || echo '$(srcdir)/'`./src/cbuf.c
+@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o random.lo `test -f './src/random.c' || echo '$(srcdir)/'`./src/random.c
 
-c_util.lo: ./src/c_util.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT c_util.lo -MD -MP -MF $(DEPDIR)/c_util.Tpo -c -o c_util.lo `test -f './src/c_util.c' || echo '$(srcdir)/'`./src/c_util.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/c_util.Tpo $(DEPDIR)/c_util.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/c_util.c' object='c_util.lo' libtool=yes @AMDEPBACKSLASH@
+hash.lo: ./src/hash.c
+@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT hash.lo -MD -MP -MF $(DEPDIR)/hash.Tpo -c -o hash.lo `test -f './src/hash.c' || echo '$(srcdir)/'`./src/hash.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/hash.Tpo $(DEPDIR)/hash.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/hash.c' object='hash.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o c_util.lo `test -f './src/c_util.c' || echo '$(srcdir)/'`./src/c_util.c
+@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o hash.lo `test -f './src/hash.c' || echo '$(srcdir)/'`./src/hash.c
 
-idx_pool.lo: ./src/idx_pool.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT idx_pool.lo -MD -MP -MF $(DEPDIR)/idx_pool.Tpo -c -o idx_pool.lo `test -f './src/idx_pool.c' || echo '$(srcdir)/'`./src/idx_pool.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/idx_pool.Tpo $(DEPDIR)/idx_pool.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/idx_pool.c' object='idx_pool.lo' libtool=yes @AMDEPBACKSLASH@
+clog.lo: ./src/clog.c
+@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT clog.lo -MD -MP -MF $(DEPDIR)/clog.Tpo -c -o clog.lo `test -f './src/clog.c' || echo '$(srcdir)/'`./src/clog.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/clog.Tpo $(DEPDIR)/clog.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/clog.c' object='clog.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o idx_pool.lo `test -f './src/idx_pool.c' || echo '$(srcdir)/'`./src/idx_pool.c
+@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o clog.lo `test -f './src/clog.c' || echo '$(srcdir)/'`./src/clog.c
 
 mostlyclean-libtool:
 	-rm -f *.lo

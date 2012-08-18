@@ -35,8 +35,11 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-subdir = common-libs/mul-lib
-DIST_COMMON = $(pkginclude_HEADERS) $(srcdir)/Makefile.am \
+bin_PROGRAMS = mull2sw$(EXEEXT)
+@HAVE_EXT_GLIB_FALSE@am__append_1 = -Wl,-rpath=$(LIB_GLIB)
+@HAVE_EXT_LIBEVENT_FALSE@am__append_2 = -Wl,-rpath=$(LIB_EVENT)
+subdir = application/l2switch
+DIST_COMMON = $(noinst_HEADERS) $(srcdir)/Makefile.am \
 	$(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/libtool.m4 \
@@ -49,32 +52,21 @@ mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = $(top_builddir)/common/config.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
-am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
-am__vpath_adj = case $$p in \
-    $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
-    *) f=$$p;; \
-  esac;
-am__strip_dir = f=`echo $$p | sed -e 's|^.*/||'`;
-am__install_max = 40
-am__nobase_strip_setup = \
-  srcdirstrip=`echo "$(srcdir)" | sed 's/[].[^$$\\*|]/\\\\&/g'`
-am__nobase_strip = \
-  for p in $$list; do echo "$$p"; done | sed -e "s|$$srcdirstrip/||"
-am__nobase_list = $(am__nobase_strip_setup); \
-  for p in $$list; do echo "$$p $$p"; done | \
-  sed "s| $$srcdirstrip/| |;"' / .*\//!s/ .*/ ./; s,\( .*\)/[^/]*$$,\1,' | \
-  $(AWK) 'BEGIN { files["."] = "" } { files[$$2] = files[$$2] " " $$1; \
-    if (++n[$$2] == $(am__install_max)) \
-      { print $$2, files[$$2]; n[$$2] = 0; files[$$2] = "" } } \
-    END { for (dir in files) print dir, files[dir] }'
-am__base_list = \
-  sed '$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;s/\n/ /g' | \
-  sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
-am__installdirs = "$(DESTDIR)$(libdir)" "$(DESTDIR)$(pkgincludedir)"
-LTLIBRARIES = $(lib_LTLIBRARIES)
-libmulutil_la_LIBADD =
-am_libmulutil_la_OBJECTS = cbuf.lo c_util.lo idx_pool.lo
-libmulutil_la_OBJECTS = $(am_libmulutil_la_OBJECTS)
+am__installdirs = "$(DESTDIR)$(bindir)"
+PROGRAMS = $(bin_PROGRAMS)
+am__mull2sw_SOURCES_DIST = l2switch.c \
+	$(top_srcdir)/common/mul_app_main.c \
+	$(top_srcdir)/common/mul_of_msg.c
+@HAVE_L2SW_MODULE_FALSE@am_mull2sw_OBJECTS = l2switch.$(OBJEXT) \
+@HAVE_L2SW_MODULE_FALSE@	mul_app_main.$(OBJEXT) \
+@HAVE_L2SW_MODULE_FALSE@	mul_of_msg.$(OBJEXT)
+mull2sw_OBJECTS = $(am_mull2sw_OBJECTS)
+mull2sw_DEPENDENCIES = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a \
+	$(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
+	$(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a
+mull2sw_LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
+	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(mull2sw_LDFLAGS) \
+	$(LDFLAGS) -o $@
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)/common
 depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__depfiles_maybe = depfiles
@@ -88,9 +80,9 @@ CCLD = $(CC)
 LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-SOURCES = $(libmulutil_la_SOURCES)
-DIST_SOURCES = $(libmulutil_la_SOURCES)
-HEADERS = $(pkginclude_HEADERS)
+SOURCES = $(mull2sw_SOURCES)
+DIST_SOURCES = $(am__mull2sw_SOURCES_DIST)
+HEADERS = $(noinst_HEADERS)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -211,14 +203,26 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-INCLUDES = -I./include -I$(top_srcdir)/common
-lib_LTLIBRARIES = libmulutil.la
-libmulutil_la_SOURCES = \
-    ./src/cbuf.c ./src/c_util.c  ./src/idx_pool.c
+ACLOCAL_AMFLAGS = -I m4 ${ACLOCAL_FLAGS}
+pkgconfigdir = $(libdir)/pkgconfig
+INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
+           -I$(top_srcdir)/common-libs/3rd-party/derived-lib/include/ \
+           -I$(top_srcdir)/common-libs/3rd-party/quagga-lib/include/ \
+           -I$(top_srcdir)/common-libs/mul-lib/include/ \
+           -I$(GLIB_INCLUDE) -I$(GLIB_INCLUDE)/../ -I$(LIBEVENT_INCLUDE)
 
-pkginclude_HEADERS = \
-    ./include/atomic.h  ./include/cbuf.h  ./include/compiler.h  ./include/c_util.h  ./include/idx_pool.h  ./include/lock.h
+@HAVE_L2SW_MODULE_FALSE@mull2sw_SOURCES = l2switch.c $(top_srcdir)/common/mul_app_main.c \
+@HAVE_L2SW_MODULE_FALSE@               $(top_srcdir)/common/mul_of_msg.c
 
+LD_FLAGS = @LDFLAGS@ $(am__append_1) $(am__append_2)
+mull2sw_LDADD = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a  \
+                $(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
+                $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a 
+
+mull2sw_LDFLAGS = -L$(LIB_GLIB) -L$(LIB_EVENT) $(LD_FLAGS) \
+              -lpthread -lglib-2.0 -levent -lcrypt
+
+noinst_HEADERS = l2switch.h
 all: all-am
 
 .SUFFIXES:
@@ -232,9 +236,9 @@ $(srcdir)/Makefile.in:  $(srcdir)/Makefile.am  $(am__configure_deps)
 	      exit 1;; \
 	  esac; \
 	done; \
-	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu common-libs/mul-lib/Makefile'; \
+	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu application/l2switch/Makefile'; \
 	$(am__cd) $(top_srcdir) && \
-	  $(AUTOMAKE) --gnu common-libs/mul-lib/Makefile
+	  $(AUTOMAKE) --gnu application/l2switch/Makefile
 .PRECIOUS: Makefile
 Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	@case '$?' in \
@@ -253,39 +257,52 @@ $(top_srcdir)/configure:  $(am__configure_deps)
 $(ACLOCAL_M4):  $(am__aclocal_m4_deps)
 	cd $(top_builddir) && $(MAKE) $(AM_MAKEFLAGS) am--refresh
 $(am__aclocal_m4_deps):
-install-libLTLIBRARIES: $(lib_LTLIBRARIES)
+install-binPROGRAMS: $(bin_PROGRAMS)
 	@$(NORMAL_INSTALL)
-	test -z "$(libdir)" || $(MKDIR_P) "$(DESTDIR)$(libdir)"
-	@list='$(lib_LTLIBRARIES)'; test -n "$(libdir)" || list=; \
-	list2=; for p in $$list; do \
-	  if test -f $$p; then \
-	    list2="$$list2 $$p"; \
-	  else :; fi; \
-	done; \
-	test -z "$$list2" || { \
-	  echo " $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=install $(INSTALL) $(INSTALL_STRIP_FLAG) $$list2 '$(DESTDIR)$(libdir)'"; \
-	  $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=install $(INSTALL) $(INSTALL_STRIP_FLAG) $$list2 "$(DESTDIR)$(libdir)"; \
-	}
+	test -z "$(bindir)" || $(MKDIR_P) "$(DESTDIR)$(bindir)"
+	@list='$(bin_PROGRAMS)'; test -n "$(bindir)" || list=; \
+	for p in $$list; do echo "$$p $$p"; done | \
+	sed 's/$(EXEEXT)$$//' | \
+	while read p p1; do if test -f $$p || test -f $$p1; \
+	  then echo "$$p"; echo "$$p"; else :; fi; \
+	done | \
+	sed -e 'p;s,.*/,,;n;h' -e 's|.*|.|' \
+	    -e 'p;x;s,.*/,,;s/$(EXEEXT)$$//;$(transform);s/$$/$(EXEEXT)/' | \
+	sed 'N;N;N;s,\n, ,g' | \
+	$(AWK) 'BEGIN { files["."] = ""; dirs["."] = 1 } \
+	  { d=$$3; if (dirs[d] != 1) { print "d", d; dirs[d] = 1 } \
+	    if ($$2 == $$4) files[d] = files[d] " " $$1; \
+	    else { print "f", $$3 "/" $$4, $$1; } } \
+	  END { for (d in files) print "f", d, files[d] }' | \
+	while read type dir files; do \
+	    if test "$$dir" = .; then dir=; else dir=/$$dir; fi; \
+	    test -z "$$files" || { \
+	    echo " $(INSTALL_PROGRAM_ENV) $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=install $(INSTALL_PROGRAM) $$files '$(DESTDIR)$(bindir)$$dir'"; \
+	    $(INSTALL_PROGRAM_ENV) $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=install $(INSTALL_PROGRAM) $$files "$(DESTDIR)$(bindir)$$dir" || exit $$?; \
+	    } \
+	; done
 
-uninstall-libLTLIBRARIES:
+uninstall-binPROGRAMS:
 	@$(NORMAL_UNINSTALL)
-	@list='$(lib_LTLIBRARIES)'; test -n "$(libdir)" || list=; \
-	for p in $$list; do \
-	  $(am__strip_dir) \
-	  echo " $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=uninstall rm -f '$(DESTDIR)$(libdir)/$$f'"; \
-	  $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=uninstall rm -f "$(DESTDIR)$(libdir)/$$f"; \
-	done
+	@list='$(bin_PROGRAMS)'; test -n "$(bindir)" || list=; \
+	files=`for p in $$list; do echo "$$p"; done | \
+	  sed -e 'h;s,^.*/,,;s/$(EXEEXT)$$//;$(transform)' \
+	      -e 's/$$/$(EXEEXT)/' `; \
+	test -n "$$list" || exit 0; \
+	echo " ( cd '$(DESTDIR)$(bindir)' && rm -f" $$files ")"; \
+	cd "$(DESTDIR)$(bindir)" && rm -f $$files
 
-clean-libLTLIBRARIES:
-	-test -z "$(lib_LTLIBRARIES)" || rm -f $(lib_LTLIBRARIES)
-	@list='$(lib_LTLIBRARIES)'; for p in $$list; do \
-	  dir="`echo $$p | sed -e 's|/[^/]*$$||'`"; \
-	  test "$$dir" != "$$p" || dir=.; \
-	  echo "rm -f \"$${dir}/so_locations\""; \
-	  rm -f "$${dir}/so_locations"; \
-	done
-libmulutil.la: $(libmulutil_la_OBJECTS) $(libmulutil_la_DEPENDENCIES) 
-	$(LINK) -rpath $(libdir) $(libmulutil_la_OBJECTS) $(libmulutil_la_LIBADD) $(LIBS)
+clean-binPROGRAMS:
+	@list='$(bin_PROGRAMS)'; test -n "$$list" || exit 0; \
+	echo " rm -f" $$list; \
+	rm -f $$list || exit $$?; \
+	test -n "$(EXEEXT)" || exit 0; \
+	list=`for p in $$list; do echo "$$p"; done | sed 's/$(EXEEXT)$$//'`; \
+	echo " rm -f" $$list; \
+	rm -f $$list
+mull2sw$(EXEEXT): $(mull2sw_OBJECTS) $(mull2sw_DEPENDENCIES) 
+	@rm -f mull2sw$(EXEEXT)
+	$(mull2sw_LINK) $(mull2sw_OBJECTS) $(mull2sw_LDADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -293,9 +310,9 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/c_util.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cbuf.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/idx_pool.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/l2switch.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mul_app_main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mul_of_msg.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -318,52 +335,39 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LTCOMPILE) -c -o $@ $<
 
-cbuf.lo: ./src/cbuf.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT cbuf.lo -MD -MP -MF $(DEPDIR)/cbuf.Tpo -c -o cbuf.lo `test -f './src/cbuf.c' || echo '$(srcdir)/'`./src/cbuf.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/cbuf.Tpo $(DEPDIR)/cbuf.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/cbuf.c' object='cbuf.lo' libtool=yes @AMDEPBACKSLASH@
+mul_app_main.o: $(top_srcdir)/common/mul_app_main.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mul_app_main.o -MD -MP -MF $(DEPDIR)/mul_app_main.Tpo -c -o mul_app_main.o `test -f '$(top_srcdir)/common/mul_app_main.c' || echo '$(srcdir)/'`$(top_srcdir)/common/mul_app_main.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mul_app_main.Tpo $(DEPDIR)/mul_app_main.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_app_main.c' object='mul_app_main.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o cbuf.lo `test -f './src/cbuf.c' || echo '$(srcdir)/'`./src/cbuf.c
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_app_main.o `test -f '$(top_srcdir)/common/mul_app_main.c' || echo '$(srcdir)/'`$(top_srcdir)/common/mul_app_main.c
 
-c_util.lo: ./src/c_util.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT c_util.lo -MD -MP -MF $(DEPDIR)/c_util.Tpo -c -o c_util.lo `test -f './src/c_util.c' || echo '$(srcdir)/'`./src/c_util.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/c_util.Tpo $(DEPDIR)/c_util.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/c_util.c' object='c_util.lo' libtool=yes @AMDEPBACKSLASH@
+mul_app_main.obj: $(top_srcdir)/common/mul_app_main.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mul_app_main.obj -MD -MP -MF $(DEPDIR)/mul_app_main.Tpo -c -o mul_app_main.obj `if test -f '$(top_srcdir)/common/mul_app_main.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_app_main.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_app_main.c'; fi`
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mul_app_main.Tpo $(DEPDIR)/mul_app_main.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_app_main.c' object='mul_app_main.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o c_util.lo `test -f './src/c_util.c' || echo '$(srcdir)/'`./src/c_util.c
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_app_main.obj `if test -f '$(top_srcdir)/common/mul_app_main.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_app_main.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_app_main.c'; fi`
 
-idx_pool.lo: ./src/idx_pool.c
-@am__fastdepCC_TRUE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT idx_pool.lo -MD -MP -MF $(DEPDIR)/idx_pool.Tpo -c -o idx_pool.lo `test -f './src/idx_pool.c' || echo '$(srcdir)/'`./src/idx_pool.c
-@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/idx_pool.Tpo $(DEPDIR)/idx_pool.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='./src/idx_pool.c' object='idx_pool.lo' libtool=yes @AMDEPBACKSLASH@
+mul_of_msg.o: $(top_srcdir)/common/mul_of_msg.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mul_of_msg.o -MD -MP -MF $(DEPDIR)/mul_of_msg.Tpo -c -o mul_of_msg.o `test -f '$(top_srcdir)/common/mul_of_msg.c' || echo '$(srcdir)/'`$(top_srcdir)/common/mul_of_msg.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mul_of_msg.Tpo $(DEPDIR)/mul_of_msg.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_of_msg.c' object='mul_of_msg.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL)  --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o idx_pool.lo `test -f './src/idx_pool.c' || echo '$(srcdir)/'`./src/idx_pool.c
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_of_msg.o `test -f '$(top_srcdir)/common/mul_of_msg.c' || echo '$(srcdir)/'`$(top_srcdir)/common/mul_of_msg.c
+
+mul_of_msg.obj: $(top_srcdir)/common/mul_of_msg.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mul_of_msg.obj -MD -MP -MF $(DEPDIR)/mul_of_msg.Tpo -c -o mul_of_msg.obj `if test -f '$(top_srcdir)/common/mul_of_msg.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_of_msg.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_of_msg.c'; fi`
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mul_of_msg.Tpo $(DEPDIR)/mul_of_msg.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_of_msg.c' object='mul_of_msg.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_of_msg.obj `if test -f '$(top_srcdir)/common/mul_of_msg.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_of_msg.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_of_msg.c'; fi`
 
 mostlyclean-libtool:
 	-rm -f *.lo
 
 clean-libtool:
 	-rm -rf .libs _libs
-install-pkgincludeHEADERS: $(pkginclude_HEADERS)
-	@$(NORMAL_INSTALL)
-	test -z "$(pkgincludedir)" || $(MKDIR_P) "$(DESTDIR)$(pkgincludedir)"
-	@list='$(pkginclude_HEADERS)'; test -n "$(pkgincludedir)" || list=; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_HEADER) $$files '$(DESTDIR)$(pkgincludedir)'"; \
-	  $(INSTALL_HEADER) $$files "$(DESTDIR)$(pkgincludedir)" || exit $$?; \
-	done
-
-uninstall-pkgincludeHEADERS:
-	@$(NORMAL_UNINSTALL)
-	@list='$(pkginclude_HEADERS)'; test -n "$(pkgincludedir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	test -n "$$files" || exit 0; \
-	echo " ( cd '$(DESTDIR)$(pkgincludedir)' && rm -f" $$files ")"; \
-	cd "$(DESTDIR)$(pkgincludedir)" && rm -f $$files
 
 ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
@@ -449,9 +453,9 @@ distdir: $(DISTFILES)
 	done
 check-am: all-am
 check: check-am
-all-am: Makefile $(LTLIBRARIES) $(HEADERS)
+all-am: Makefile $(PROGRAMS) $(HEADERS)
 installdirs:
-	for dir in "$(DESTDIR)$(libdir)" "$(DESTDIR)$(pkgincludedir)"; do \
+	for dir in "$(DESTDIR)$(bindir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -481,8 +485,7 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-generic clean-libLTLIBRARIES clean-libtool \
-	mostlyclean-am
+clean-am: clean-binPROGRAMS clean-generic clean-libtool mostlyclean-am
 
 distclean: distclean-am
 	-rm -rf ./$(DEPDIR)
@@ -502,13 +505,13 @@ info: info-am
 
 info-am:
 
-install-data-am: install-pkgincludeHEADERS
+install-data-am:
 
 install-dvi: install-dvi-am
 
 install-dvi-am:
 
-install-exec-am: install-libLTLIBRARIES
+install-exec-am: install-binPROGRAMS
 
 install-html: install-html-am
 
@@ -548,24 +551,23 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-libLTLIBRARIES uninstall-pkgincludeHEADERS
+uninstall-am: uninstall-binPROGRAMS
 
 .MAKE: install-am install-strip
 
-.PHONY: CTAGS GTAGS all all-am check check-am clean clean-generic \
-	clean-libLTLIBRARIES clean-libtool ctags distclean \
-	distclean-compile distclean-generic distclean-libtool \
-	distclean-tags distdir dvi dvi-am html html-am info info-am \
-	install install-am install-data install-data-am install-dvi \
+.PHONY: CTAGS GTAGS all all-am check check-am clean clean-binPROGRAMS \
+	clean-generic clean-libtool ctags distclean distclean-compile \
+	distclean-generic distclean-libtool distclean-tags distdir dvi \
+	dvi-am html html-am info info-am install install-am \
+	install-binPROGRAMS install-data install-data-am install-dvi \
 	install-dvi-am install-exec install-exec-am install-html \
-	install-html-am install-info install-info-am \
-	install-libLTLIBRARIES install-man install-pdf install-pdf-am \
-	install-pkgincludeHEADERS install-ps install-ps-am \
+	install-html-am install-info install-info-am install-man \
+	install-pdf install-pdf-am install-ps install-ps-am \
 	install-strip installcheck installcheck-am installdirs \
 	maintainer-clean maintainer-clean-generic mostlyclean \
 	mostlyclean-compile mostlyclean-generic mostlyclean-libtool \
 	pdf pdf-am ps ps-am tags uninstall uninstall-am \
-	uninstall-libLTLIBRARIES uninstall-pkgincludeHEADERS
+	uninstall-binPROGRAMS
 
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
