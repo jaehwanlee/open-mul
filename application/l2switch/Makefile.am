@@ -17,10 +17,8 @@ INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
 
 DEFS = @DEFS@ -DSYSCONFDIR=\"$(sysconfdir)/\"
 
-if !HAVE_L2SW_MODULE 
 mull2sw_SOURCES = l2switch.c $(top_srcdir)/common/mul_app_main.c \
                $(top_srcdir)/common/mul_of_msg.c
-endif
 
 LD_FLAGS= @LDFLAGS@ 
 
