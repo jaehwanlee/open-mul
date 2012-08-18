@@ -28,18 +28,17 @@ endif
 LD_FLAGS= @LDFLAGS@ 
 
 if !HAVE_EXT_GLIB
-LD_FLAGS += -Wl,-rpath=$(LIB_GLIB)
+LD_FLAGS += -Wl,-rpath=$(LIB_GLIB) -L$(LIB_GLIB)
 endif
 
 if !HAVE_EXT_LIBEVENT
-LD_FLAGS += -Wl,-rpath=$(LIB_EVENT)
+LD_FLAGS += -Wl,-rpath=$(LIB_EVENT) -L$(LIB_EVENT)
 endif
 
 mul_LDADD = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a  \
             $(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
             $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a 
 
-mul_LDFLAGS = -L$(LIB_GLIB) -L$(LIB_EVENT) $(LD_FLAGS) \
-              -lpthread -lglib-2.0 -levent -lcrypt
+mul_LDFLAGS = $(LD_FLAGS) -lpthread -lglib-2.0 -levent -lcrypt 
 
 noinst_HEADERS = mul_events.h mul.h mul_of.h mul_priv.h mul_thread.h

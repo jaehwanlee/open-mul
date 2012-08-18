@@ -25,18 +25,17 @@ endif
 LD_FLAGS= @LDFLAGS@ 
 
 if !HAVE_EXT_GLIB
-LD_FLAGS += -Wl,-rpath=$(LIB_GLIB)
+LD_FLAGS += -Wl,-rpath=$(LIB_GLIB) -L$(LIB_GLIB)
 endif
 
 if !HAVE_EXT_LIBEVENT
-LD_FLAGS += -Wl,-rpath=$(LIB_EVENT)
+LD_FLAGS += -Wl,-rpath=$(LIB_EVENT) -L$(LIB_EVENT)
 endif
 
 mull2sw_LDADD = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a  \
                 $(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
                 $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a 
 
-mull2sw_LDFLAGS = -L$(LIB_GLIB) -L$(LIB_EVENT) $(LD_FLAGS) \
-              -lpthread -lglib-2.0 -levent -lcrypt
+mull2sw_LDFLAGS = $(LD_FLAGS) -lpthread -lglib-2.0 -levent -lcrypt 
 
 noinst_HEADERS = l2switch.h
