@@ -11305,6 +11305,8 @@ if test "x$ac_cv_header_glib_h" = x""yes; then :
 #define HAVE_GLIB_H 1
 _ACEOF
 
+else
+  as_fn_error "glib header file not found" "$LINENO" 5
 fi
 
 done
@@ -11344,9 +11346,9 @@ if test "x$with_libevent" != "x" ; then
 else
   LIB_EVENT=
   LIBEVENT_INCLUDE=
-  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing event_new" >&5
-$as_echo_n "checking for library containing event_new... " >&6; }
-if test "${ac_cv_search_event_new+set}" = set; then :
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing event_add" >&5
+$as_echo_n "checking for library containing event_add... " >&6; }
+if test "${ac_cv_search_event_add+set}" = set; then :
   $as_echo_n "(cached) " >&6
 else
   ac_func_search_save_LIBS=$LIBS
@@ -11359,11 +11361,11 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 #ifdef __cplusplus
 extern "C"
 #endif
-char event_new ();
+char event_add ();
 int
 main ()
 {
-return event_new ();
+return event_add ();
   ;
   return 0;
 }
@@ -11376,25 +11378,25 @@ for ac_lib in '' event; do
     LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
   fi
   if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_search_event_new=$ac_res
+  ac_cv_search_event_add=$ac_res
 fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext
-  if test "${ac_cv_search_event_new+set}" = set; then :
+  if test "${ac_cv_search_event_add+set}" = set; then :
   break
 fi
 done
-if test "${ac_cv_search_event_new+set}" = set; then :
+if test "${ac_cv_search_event_add+set}" = set; then :
 
 else
-  ac_cv_search_event_new=no
+  ac_cv_search_event_add=no
 fi
 rm conftest.$ac_ext
 LIBS=$ac_func_search_save_LIBS
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_event_new" >&5
-$as_echo "$ac_cv_search_event_new" >&6; }
-ac_res=$ac_cv_search_event_new
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_event_add" >&5
+$as_echo "$ac_cv_search_event_add" >&6; }
+ac_res=$ac_cv_search_event_add
 if test "$ac_res" != no; then :
   test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
   have_libevent=yes
@@ -11410,6 +11412,8 @@ if test "x$ac_cv_header_event2_event_h" = x""yes; then :
 #define HAVE_EVENT2_EVENT_H 1
 _ACEOF
 
+else
+  as_fn_error "libevent header file not found" "$LINENO" 5
 fi
 
 done
