@@ -135,7 +135,7 @@ else
   AC_SEARCH_LIBS([event_add], [event],
                  [have_libevent=yes], 
                  [AC_MSG_ERROR([libevent is not installed])])
-  AC_CHECK_HEADERS([event.h], [], 
+  AC_CHECK_HEADERS([event2/event.h], [], 
                    [AC_MSG_ERROR([libevent header file not found])])                  
 fi
 LIBS="$save_LIBS"
