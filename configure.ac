@@ -106,7 +106,8 @@ else
   AC_SEARCH_LIBS([g_get_monotonic_time], [glib-2.0],
                  [have_glib=yes], 
                  [AC_MSG_ERROR([glib is not installed])])
-  AC_CHECK_HEADERS([glib.h])                  
+  AC_CHECK_HEADERS([glib.h], [],
+                 [AC_MSG_ERROR([glib header file not found])])                  
 fi
 LIBS="$save_LIBS"
 
@@ -131,10 +132,11 @@ if test "x$with_libevent" != "x" ; then
 else
   LIB_EVENT=
   LIBEVENT_INCLUDE=
-  AC_SEARCH_LIBS([event_new], [event],
+  AC_SEARCH_LIBS([event_add], [event],
                  [have_libevent=yes], 
                  [AC_MSG_ERROR([libevent is not installed])])
-  AC_CHECK_HEADERS([event2/event.h])                  
+  AC_CHECK_HEADERS([event.h], [], 
+                   [AC_MSG_ERROR([libevent header file not found])])                  
 fi
 LIBS="$save_LIBS"
 
