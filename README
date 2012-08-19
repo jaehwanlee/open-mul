@@ -59,8 +59,8 @@
 
     Options to use -
     mul -d      : Daemon mode
-            -S <n>  : Num of switch threads
-            -A <n>  : Num of app threads
+        -S <n>  : Num of switch threads
+        -A <n>  : Num of app threads
 
 5. [Optional if you opt for modules to run as a separate process]
 
