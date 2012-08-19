@@ -41,7 +41,7 @@ bin_PROGRAMS = mul$(EXEEXT)
 @HAVE_EXT_GLIB_FALSE@am__append_3 = -I$(GLIB_INCLUDE) -I$(GLIB_INCLUDE)/../
 @HAVE_EXT_LIBEVENT_FALSE@am__append_4 = -Wl,-rpath=$(LIB_EVENT) -L$(LIB_EVENT)
 @HAVE_EXT_LIBEVENT_FALSE@am__append_5 = -I$(LIBEVENT_INCLUDE)
-subdir = mul-core
+subdir = mul
 DIST_COMMON = $(noinst_HEADERS) $(srcdir)/Makefile.am \
 	$(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -239,9 +239,9 @@ $(srcdir)/Makefile.in:  $(srcdir)/Makefile.am  $(am__configure_deps)
 	      exit 1;; \
 	  esac; \
 	done; \
-	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu mul-core/Makefile'; \
+	echo ' cd $(top_srcdir) && $(AUTOMAKE) --gnu mul/Makefile'; \
 	$(am__cd) $(top_srcdir) && \
-	  $(AUTOMAKE) --gnu mul-core/Makefile
+	  $(AUTOMAKE) --gnu mul/Makefile
 .PRECIOUS: Makefile
 Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	@case '$?' in \
