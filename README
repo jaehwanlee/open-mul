@@ -9,17 +9,17 @@
 
        Not verified with recent ubuntu versions but should work fine.
 
-    b) Install core packages glib (>= 2.32) and libevent (>= 2.0.18):
+    b) Install core packages glib-2.0 (>= 2.32) and libevent (>= 2.0.18):
 
        i) There is a utility script which should configure and build these 
-          packages:
+          packages(but will not install), just, do enough for mul compilation :
 
         >  cd  SCRIPTS
         >  ./configure_ext_libs 
 
         OR, 
 
-       ii) One can also download and install them separately or by apt-get. 
+       ii) One can also download and build/install them separately or by apt-get. 
 
     c) [Optional for performance] Install google's tcmalloc  
 
@@ -31,14 +31,15 @@
 
 2. Configure MuL 
 
-    a) If you used built-in script to download core libraries, then one can 
-       issue the following:
+    a) If you used built-in script to download core packages, then one can 
+       use the following:
 
        > ./configure  --with-glib=`pwd`/common-libs/3rd-party/glib-2.32.0/ 
          --with-libevent=`pwd`/common-libs/3rd-party/libevent-2.0.18-stable/ 
         
-    b) If you build and install glib and libevent separately, we can simply issue:
-       > ./configure      
+    b) If you build and install glib and libevent separately, we can simply use:
+       > ./configure LDFLAGS=-L/usr/local/lib  CFLAGS="-I/usr/local/include/glib-2.0/
+             -I/usr/local/lib/glib-2.0/include/"     
 
     c) Module options :
 
@@ -62,7 +63,7 @@
             -S <n>  : Num of switch threads
             -A <n>  : Num of app threads
 
-5. [Optional if you opt for modules  to run as a separate process]
+5. [Optional if you opt for modules to run as a separate process]
 
     > cd application/l2switch/
 
