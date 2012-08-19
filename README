@@ -38,18 +38,17 @@
          --with-libevent=`pwd`/common-libs/3rd-party/libevent-2.0.18-stable/ 
         
     b) If you build and install glib and libevent separately, we can simply use:
-       > ./configure LDFLAGS=-L/usr/local/lib  CFLAGS="-I/usr/local/include/glib-2.0/
-             -I/usr/local/lib/glib-2.0/include/"     
+       > ./configure    ## Pass LDFLAGS and CFLAGS if these are installed in non-
+                        ## standard directories.
 
-    c) Module options :
+    c) configure script options :
 
-       > ./configure with-l2sw=y     ## Build l2sw module as a separate process (default)
+       > with-l2sw=y     ## Build l2sw module as a separate process (default)
 
        OR, 
         
-       > ./configure with-l2sw=m     ## Build l2sw module as a modular entity inside the 
-                                     ## controller.
-     
+       > with-l2sw=m     ## Build l2sw module as a modular entity inside the 
+                         ## controller.
 3. Build MuL 
 
    > make 
@@ -59,7 +58,7 @@
    - You need to run using sudo or as admin.
 
     Options to use -
-    mul.bin -d      : Daemon mode
+    mul -d      : Daemon mode
             -S <n>  : Num of switch threads
             -A <n>  : Num of app threads
 
