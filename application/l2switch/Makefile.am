@@ -12,8 +12,7 @@ LIBEVENT_INCLUDE = @LIBEVENT_INCLUDE@
 INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
            -I$(top_srcdir)/common-libs/3rd-party/derived-lib/include/ \
            -I$(top_srcdir)/common-libs/3rd-party/quagga-lib/include/ \
-           -I$(top_srcdir)/common-libs/mul-lib/include/ \
-           -I$(GLIB_INCLUDE) -I$(GLIB_INCLUDE)/../ -I$(LIBEVENT_INCLUDE)
+           -I$(top_srcdir)/common-libs/mul-lib/include/
 
 DEFS = @DEFS@ -DSYSCONFDIR=\"$(sysconfdir)/\"
 
@@ -24,10 +23,12 @@ LD_FLAGS= @LDFLAGS@
 
 if !HAVE_EXT_GLIB
 LD_FLAGS += -Wl,-rpath=$(LIB_GLIB) -L$(LIB_GLIB)
+INCLUDES += -I$(GLIB_INCLUDE) -I$(GLIB_INCLUDE)/../
 endif
 
 if !HAVE_EXT_LIBEVENT
 LD_FLAGS += -Wl,-rpath=$(LIB_EVENT) -L$(LIB_EVENT)
+INCLUDES += -I$(LIBEVENT_INCLUDE)
 endif
 
 mull2sw_LDADD = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a  \
