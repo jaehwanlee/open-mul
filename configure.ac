@@ -129,7 +129,7 @@ if test "x$with_libevent" != "x" ; then
 else
   LIB_EVENT=
   LIBEVENT_INCLUDE=
-  AC_SEARCH_LIBS([event_add], [event],
+  AC_SEARCH_LIBS([event_new], [event],
                  [have_libevent=yes], 
                  [AC_MSG_ERROR([libevent is not installed])])
   AC_CHECK_HEADERS([event2/event.h], [], 
