@@ -22,6 +22,14 @@
 #include "mul.h"
 
 
+/* 
+ * c_l2_lrn_fwd - This is fast code which is supposed to know l2sw module's
+ * learning and forwarding code. Since it runs as a part of core controller                 
+ * it can easily take advantage of controller's threaded features and run
+ * in-context. It offloads forwarding functions from the module itself.
+ * (FIXME - This is not yet implemented fully. It will functionally work
+ *  but there will be gaps in learning)
+ */
 int __fastpath
 c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len, 
              struct flow *in_flow, uint16_t in_port)
