@@ -24,9 +24,9 @@
 
 /* 
  * c_l2_lrn_fwd - This is fast code which is supposed to know l2sw module's
- * learning and forwarding code. Since it runs as a part of core controller                 
+ * learning and forwarding behaviour. Since it runs as a part of core controller                 
  * it can easily take advantage of controller's threaded features and run
- * in-context. It offloads forwarding functions from the module itself.
+ * in-thread-context. It offloads forwarding functions from the module itself.
  * (FIXME - This is not yet implemented fully. It will functionally work
  *  but there will be gaps in learning)
  */
