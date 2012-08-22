@@ -21,6 +21,8 @@
 #include "mul_vty.h"
 #include "l2switch.h"
 
+#define CONFIG_L2SW_FDB_CACHE 1
+
 l2port_t *l2sw_port_find(l2sw_t *sw, uint16_t port_no);
 int l2sw_mod_flow(l2sw_t *l2sw, l2fdb_ent_t *fdb, bool add_del, uint32_t buffer_id);
 static void l2sw_install_dfl_flows(uint64_t dpid);
@@ -428,7 +430,7 @@ l2_fwd:
         l2sw_mod_flow(l2sw, fdb, true, ntohl(opi->buffer_id));
         c_wr_unlock(&l2sw->lock);
         l2sw_put(l2sw); 
-        return;
+        return 0;
     } 
     c_wr_unlock(&l2sw->lock);
 #endif
