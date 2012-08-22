@@ -426,6 +426,9 @@ l2_fwd:
     if (fdb) { 
         oport = fdb->lrn_port;
         l2sw_mod_flow(l2sw, fdb, true, ntohl(opi->buffer_id));
+        c_wr_unlock(&l2sw->lock);
+        l2sw_put(l2sw); 
+        return;
     } 
     c_wr_unlock(&l2sw->lock);
 #endif
