@@ -223,7 +223,6 @@ l2sw_install_dfl_flows(uint64_t dpid)
 {
     struct cbuf                 *b;
     c_ofp_flow_mod_t            *cofp_fm;
-    struct ofp_action_output    *op_act;
     uint32_t                    wildcards = OFPFW_ALL;
 
     /* Clear all entries for this switch */
@@ -297,22 +296,6 @@ l2sw_install_dfl_flows(uint64_t dpid)
     cofp_fm->priority = htons(C_FL_PRIO_DFL);
     mul_app_command_handler(L2SW_APP_NAME, b);
 #endif
-
-    /* Forward broadcast dst mac to all ports */
-    b = of_prep_msg(sizeof(*cofp_fm) + sizeof(*op_act), C_OFPT_FLOW_MOD, 0);
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
-    cofp_fm->command = C_OFPC_ADD;
-    memset(cofp_fm->flow.dl_dst, 0xff, OFP_ETH_ALEN);
-    wildcards = OFPFW_ALL;
-    wildcards &= ~(OFPFW_DL_DST);
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->buffer_id = L2SW_UNK_BUFFER_ID;
-    cofp_fm->priority = htons(C_FL_PRIO_FWD);
-    op_act = (void *)(cofp_fm+1);
-    of_make_action_output((char **)&op_act, sizeof(struct ofp_action_output),
-                          OFPP_ALL);
-    mul_app_command_handler(L2SW_APP_NAME, b);
 }
 
 
@@ -436,36 +419,41 @@ l2sw_learn_and_fwd(l2sw_hdl_t *l2sw_hdl, uint64_t dpid,
     memcpy(fdb->mac_da, fl->dl_src, OFP_ETH_ALEN);
     fdb->lrn_port = ntohs(fl->in_port);
     g_hash_table_insert(l2sw->l2fdb_htbl, fdb->mac_da, fdb);
-    l2sw_mod_flow(l2sw, fdb, true, (uint32_t)(-1));
 
 l2_fwd:
-#endif
 
-    
-    b = of_prep_msg(sizeof(*cofp_po) + sizeof(*op_act) + pkt_len, 
-                    OFPT_PACKET_OUT, 0);
-
-    cofp_po = (void *)(b->data);
-    cofp_po->datapath_id = htonll(dpid);
-    cofp_po->in_port = opi->in_port;
-    cofp_po->buffer_id = opi->buffer_id;;
-    cofp_po->actions_len = htons(sizeof(*op_act));
-
-#ifdef CONFIG_L2SW_FDB_CACHE 
     fdb = g_hash_table_lookup(l2sw->l2fdb_htbl, fl->dl_dst);
     if (fdb) { 
         oport = fdb->lrn_port;
+        l2sw_mod_flow(l2sw, fdb, true, ntohl(opi->buffer_id));
     } 
     c_wr_unlock(&l2sw->lock);
 #endif
 
     l2sw_put(l2sw); 
 
+
+    if (opi->buffer_id != L2SW_UNK_BUFFER_ID) {
+        pkt_len = 0;
+    }
+
+    b = of_prep_msg(sizeof(*cofp_po) + sizeof(*op_act) + pkt_len,
+                    OFPT_PACKET_OUT, 0);
+
+    cofp_po = (void *)(b->data);
+    cofp_po->datapath_id = htonll(dpid);
+    cofp_po->in_port = opi->in_port;
+    cofp_po->buffer_id = opi->buffer_id;
+    cofp_po->actions_len = htons(sizeof(*op_act));
+
+ 
     op_act = (void *)(cofp_po+1);
     of_make_action_output((char **)&op_act, sizeof(*op_act), oport);
 
-    out_data = (void *)(op_act + 1);
-    memcpy(out_data, opi->data, pkt_len);
+    if (pkt_len) {
+        out_data = (void *)(op_act + 1);
+        memcpy(out_data, opi->data, pkt_len);
+    }
 
     mul_app_command_handler(L2SW_APP_NAME, b);
 
