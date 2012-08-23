@@ -548,7 +548,7 @@ c_app_event_finish(c_switch_t *sw, c_app_info_t *app, void *pkt_arg)
 }
 
 static void
-c_app_event_send(void *arg, void *u_arg UNUSED)
+c_app_event_send(void *arg, void *u_arg)
 {
     struct c_sw_event_q_ent *ev_q_ent = arg;
 
@@ -558,7 +558,7 @@ c_app_event_send(void *arg, void *u_arg UNUSED)
         return;
     }
 
-    ev_q_ent->app->ev_cb(ev_q_ent->app, ev_q_ent->b);
+    ev_q_ent->app->ev_cb(u_arg, ev_q_ent->b);
     c_app_put(ev_q_ent->app);
     free_cbuf(ev_q_ent->b);
 }
@@ -569,7 +569,7 @@ c_switch_app_eventq_send(c_switch_t *sw)
     /* Strategically dont care about locking */
     if (sw->app_eventq) {
         g_slist_foreach(sw->app_eventq,
-                        (GFunc)c_app_event_send, NULL);
+                        (GFunc)c_app_event_send, sw);
         g_slist_free_full(sw->app_eventq, c_app_event_q_ent_free);
         sw->app_eventq = NULL;
     }
@@ -759,8 +759,8 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
 
     sw = of_switch_get(&ctrl_hdl, ntohll(cofp_fm->DPID));
     if (!sw) {
-        c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
-                  (unsigned long long)ntohll(cofp_fm->DPID));
+        //c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
+        //          (unsigned long long)ntohll(cofp_fm->DPID));
         RETURN_APP_ERR(app_arg, b, ret, OFPET_BAD_REQUEST, OFPBRC_BAD_DPID);  
     }
 
@@ -788,8 +788,10 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
     fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
     fl_parms.itimeo = ntohs(cofp_fm->itimeo); 
     fl_parms.htimeo = ntohs(cofp_fm->htimeo); 
-    fl_parms.actions = malloc(action_len);
-    assert(fl_parms.actions);
+    if (action_len) {
+        fl_parms.actions = malloc(action_len);
+        assert(fl_parms.actions);
+    }
 
     memcpy(fl_parms.actions, cofp_fm->actions, action_len);
 
@@ -815,6 +817,103 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
 }
 
 
+int __fastpath
+mul_app_send_flow_add(void *app_name, void *sw_arg, uint64_t dpid, struct flow *fl,
+                      uint32_t buffer_id, void *actions,  size_t action_len,
+                      uint16_t itimeo, uint16_t htimeo, uint32_t wildcards,
+                      uint16_t prio, uint8_t flags)  
+{
+    c_switch_t *sw = sw_arg;
+    struct of_flow_mod_params fl_parms;
+    c_app_info_t *app;
+    int ret = 0;
+
+    if (sw == NULL) {
+        if (!( sw = of_switch_get(&ctrl_hdl, dpid))) {
+            return -EINVAL;
+        }
+    } else {
+        atomic_inc(&sw->ref, 1);
+    }
+
+    if (flags & C_FL_ENT_NOCACHE) {
+        ret = of_send_flow_add_nocache(sw, fl, buffer_id, actions, action_len,
+                                       itimeo, htimeo, wildcards, prio);
+        of_switch_put(sw);
+        return ret;
+    }
+
+    app = c_app_get(&ctrl_hdl, (char *)app_name);
+    if (!app) {
+        of_switch_put(sw);
+        return -EINVAL;
+    }
+
+    memset(&fl_parms, 0, sizeof(fl_parms));
+    fl_parms.app_owner = app;
+    fl_parms.flow = fl;
+    fl_parms.wildcards = htonl(wildcards);
+    fl_parms.buffer_id = buffer_id;
+    fl_parms.flags = flags;
+    fl_parms.prio = prio;
+    fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
+    fl_parms.itimeo = itimeo;
+    fl_parms.htimeo = htimeo;
+    fl_parms.actions = actions;
+    fl_parms.action_len = action_len;
+
+    ret = of_flow_add(sw, &fl_parms);
+
+    c_app_put(app);
+    of_switch_put(sw);
+
+    return ret;
+}
+
+int __fastpath
+mul_app_send_flow_del(void *app_name, void *sw_arg, uint64_t dpid, struct flow *fl,
+                      uint32_t wildcards, uint16_t oport, uint8_t flags)
+{
+    c_switch_t *sw = sw_arg;
+    struct of_flow_mod_params fl_parms;
+    c_app_info_t *app;
+    int ret = 0;
+
+    if (sw == NULL) {
+        if (!( sw = of_switch_get(&ctrl_hdl, dpid))) {
+            return -EINVAL;
+        }
+    } else {
+        atomic_inc(&sw->ref, 1);
+    }
+
+    if (flags & C_FL_ENT_NOCACHE) {
+        ret = of_send_flow_del_nocache(sw, fl, wildcards, oport, false);
+        of_switch_put(sw);
+        return ret;    
+    }
+
+    app = c_app_get(&ctrl_hdl, (char *)app_name);
+    if (!app) {
+        of_switch_put(sw);
+        return -EINVAL;
+    }
+
+    memset(&fl_parms, 0, sizeof(fl_parms));
+    fl_parms.app_owner = app;
+    fl_parms.flow = fl;
+    fl_parms.wildcards = htonl(wildcards);
+    fl_parms.flags = flags;
+    fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
+
+    ret = of_flow_del(sw, &fl_parms);
+
+    c_app_put(app);
+    of_switch_put(sw);
+
+    return ret;
+}
+
 static int  __fastpath
 c_app_packet_out_command(void *app_arg, struct cbuf *b, void *data)
 {
@@ -832,8 +931,8 @@ c_app_packet_out_command(void *app_arg, struct cbuf *b, void *data)
 
     sw = of_switch_get(&ctrl_hdl, ntohll(cofp_po->DPID));
     if (unlikely(!sw)) {
-        c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
-                  (unsigned long long)ntohll(cofp_po->DPID));
+        //c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
+        //          (unsigned long long)ntohll(cofp_po->DPID));
         RETURN_APP_ERR(app_arg, b, ret, OFPET_BAD_REQUEST, OFPBRC_BAD_DPID);  
     }
 
@@ -859,6 +958,28 @@ c_app_packet_out_command(void *app_arg, struct cbuf *b, void *data)
     of_switch_put(sw);
 
     return 0;
+}
+
+void __fastpath
+mul_app_send_pkt_out(void *sw_arg, uint64_t dpid, void *parms_arg)
+{
+    c_switch_t *sw = sw_arg;
+    struct of_pkt_out_params *parms = parms_arg;
+    
+    if (sw == NULL) {
+        if (!(sw = of_switch_get(&ctrl_hdl, dpid))) {
+            return;
+        }
+    } else {
+        atomic_inc(&sw->ref, 1);
+    }
+
+    of_send_pkt_out(sw, parms);
+
+    of_switch_put(sw);
+
+    return;
+
 }
 
 static int 

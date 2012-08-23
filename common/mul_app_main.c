@@ -184,7 +184,9 @@ c_app_read(evutil_socket_t fd, short events UNUSED, void *arg)
                                       sizeof(struct ofp_header));
 
     if (c_recvd_sock_dead(ret)) {
+        hdl->conn.dead = 1;
         c_log_debug("Controller connection Lost..\n");
+        perror("c_app_read");
         c_app_reconnect(hdl);
     }
 
@@ -240,6 +242,100 @@ mul_unregister_app(char *app_name)
     strncpy(unreg_app->app_name, app_name, C_MAX_APP_STRLEN-1);
 
     c_app_tx(&c_app_main_hdl.conn, b);
+
+    return 0;
+}
+
+void
+mul_app_send_pkt_out(void *arg UNUSED, uint64_t dpid, void *parms_arg)
+{
+    struct of_pkt_out_params  *parms = parms_arg;
+    void                      *out_data;
+    struct cbuf               *b;
+    uint8_t                   *act;
+    struct c_ofp_packet_out   *cofp_po;
+
+    b = of_prep_msg(sizeof(*cofp_po) + parms->action_len + parms->data_len,
+                    OFPT_PACKET_OUT, 0);
+
+    cofp_po = (void *)(b->data);
+    cofp_po->datapath_id = htonll(dpid);
+    cofp_po->in_port = htons(parms->in_port);
+    cofp_po->buffer_id = htonl(parms->buffer_id); 
+    cofp_po->actions_len = htons(parms->action_len);
+
+    act = (void *)(cofp_po+1);
+    memcpy(act, parms->action_list, parms->action_len);
+
+    if (parms->data_len) {
+        out_data = (void *)(act + parms->action_len);
+        memcpy(out_data, parms->data, parms->data_len);
+    }
+
+    mul_app_command_handler(NULL, b);
+
+    return;
+}
+
+int
+mul_app_send_flow_add(void *app_name UNUSED, void *sw_arg UNUSED,
+                      uint64_t dpid, struct flow *fl, uint32_t buffer_id,
+                      void *actions, size_t action_len, uint16_t itimeo, 
+                      uint16_t htimeo, uint32_t wildcards, uint16_t prio, 
+                      uint8_t flags)
+{
+    c_ofp_flow_mod_t            *cofp_fm;
+    void                        *act;
+    struct cbuf                 *b;
+    size_t                      tot_len = 0;
+
+    tot_len = sizeof(*cofp_fm) + action_len; 
+
+    b = of_prep_msg(tot_len, C_OFPT_FLOW_MOD, 0);
+
+    cofp_fm = (void *)(b->data);
+    cofp_fm->datapath_id = htonll(dpid);
+    cofp_fm->command = C_OFPC_ADD;
+    cofp_fm->flags = flags;
+    memcpy(&cofp_fm->flow, fl, sizeof(*fl));
+    cofp_fm->wildcards = htonl(wildcards);
+    cofp_fm->priority = htons(prio);
+    cofp_fm->itimeo = htons(itimeo);
+    cofp_fm->htimeo = htons(htimeo);
+    cofp_fm->buffer_id = htonl(buffer_id);
+    cofp_fm->oport = OFPP_NONE;
+
+    act = (void *)(cofp_fm+1);
+    memcpy(act, actions, action_len);
+
+    mul_app_command_handler(NULL, b);
+
+    return 0;
+}
+
+int
+mul_app_send_flow_del(void *app_name UNUSED, void *sw_arg UNUSED, 
+                      uint64_t dpid, struct flow *fl,
+                      uint32_t wildcards, uint16_t oport, 
+                      uint8_t flags)
+{
+    c_ofp_flow_mod_t            *cofp_fm;
+    struct cbuf                 *b;
+    size_t                      tot_len = 0;
+
+    tot_len = sizeof(*cofp_fm); 
+
+    b = of_prep_msg(tot_len, C_OFPT_FLOW_MOD, 0);
+
+    cofp_fm = (void *)(b->data);
+    cofp_fm->datapath_id = htonll(dpid);
+    cofp_fm->command = C_OFPC_DEL;
+    cofp_fm->flags = flags;
+    memcpy(&cofp_fm->flow, fl, sizeof(*fl));
+    cofp_fm->wildcards = htonl(wildcards);
+    cofp_fm->oport = htons(oport);
+
+    mul_app_command_handler(NULL, b);
 
     return 0;
 }

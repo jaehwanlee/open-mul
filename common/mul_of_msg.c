@@ -382,7 +382,4 @@ of_prep_pkt_out_msg(struct of_pkt_out_params *parms)
     memcpy(data, parms->data, parms->data_len);
 
     return b;
-
 }
-
-

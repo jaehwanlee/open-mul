@@ -48,7 +48,7 @@
        OR, 
         
        > with-l2sw=m     ## Build l2sw module as a modular entity inside the 
-                         ## controller.
+                         ## controller. (performance mode)
 3. Build MuL 
 
    > make 

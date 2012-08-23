@@ -29,13 +29,6 @@ extern initcall_t __start_modvtyinit_sec, __stop_modvtyinit_sec;
 #define vty_attr         __attribute__ ((section ("modvtyinit_sec")))
 #define module_vty_init(x)  initcall_t _##x vty_attr = x
 
-void mul_app_free_buf(void *b);
-int mul_register_app(void *app, char *app_name, uint32_t app_flags,
-                     uint32_t ev_mask, uint32_t n_dpid, uint64_t *dpid_list,
-                     void  (*ev_cb)(void *app_arg, void *pkt_arg));
-int mul_unregister_app(char *app_name);
-int mul_app_command_handler(void *app_name,void *b);
-
 #include "openflow.h"
 
 /* Controller app event notifications */
@@ -231,4 +224,20 @@ typedef struct c_ofp_register_app c_ofp_register_app_t;
 typedef struct c_ofp_unregister_app c_ofp_unregister_app_t;
 typedef struct c_ofp_set_fp_ops c_ofp_set_fp_ops_t;
 typedef struct ofp_error_msg c_ofp_error_msg_t;
+
+void mul_app_free_buf(void *b);
+int mul_register_app(void *app, char *app_name, uint32_t app_flags,
+                     uint32_t ev_mask, uint32_t n_dpid, uint64_t *dpid_list,
+                     void  (*ev_cb)(void *app_arg, void *pkt_arg));
+int mul_unregister_app(char *app_name);
+int mul_app_command_handler(void *app_name,void *b);
+int mul_app_send_flow_add(void *app_name, void *sw_arg, uint64_t dpid, struct flow *fl,
+                          uint32_t buffer_id, void *actions, size_t action_len,
+                          uint16_t itimeo, uint16_t htimeo, uint32_t wildcards,
+                          uint16_t prio, uint8_t flag);
+int mul_app_send_flow_del(void *app_name, void *sw_arg, uint64_t dpid,
+                          struct flow *fl, uint32_t wildcards, 
+                          uint16_t port, uint8_t flag);
+void mul_app_send_pkt_out(void *sw_arg, uint64_t dpid, void *parms);
+
 #endif

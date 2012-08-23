@@ -24,12 +24,29 @@
 #define CONFIG_L2SW_FDB_CACHE 1
 
 l2port_t *l2sw_port_find(l2sw_t *sw, uint16_t port_no);
-int l2sw_mod_flow(l2sw_t *l2sw, l2fdb_ent_t *fdb, bool add_del, uint32_t buffer_id);
+int l2sw_mod_flow(void *arg, l2sw_t *l2sw, l2fdb_ent_t *fdb, 
+                  bool add_del, uint32_t buffer_id);
 static void l2sw_install_dfl_flows(uint64_t dpid);
 static void l2_slist_ent_free(void *arg);
-static int l2sw_set_fp_ops(l2sw_t *l2sw);
 
 l2sw_hdl_t *l2sw_hdl;
+
+#ifndef CONFIG_L2SW_FDB_CACHE
+static int
+l2sw_set_fp_ops(l2sw_t *l2sw)
+{
+    c_ofp_set_fp_ops_t  *cofp_fp;
+    struct cbuf         *b;
+
+    b = of_prep_msg(sizeof(*cofp_fp), C_OFPT_SET_FPOPS, 0);
+
+    cofp_fp = (void *)(b->data);
+    cofp_fp->datapath_id = htonll(l2sw->swid); 
+    cofp_fp->fp_type = htonl(C_FP_TYPE_L2);
+
+    return mul_app_command_handler(L2SW_APP_NAME, b);
+}
+#endif
 
 static inline void    
 l2sw_put(l2sw_t *sw)
@@ -140,7 +157,7 @@ check_l2port_down_l2sw_fdb(void *key UNUSED, void *ent, void *u_arg)
         return 0;
     }
 
-    l2sw_mod_flow(l2sw, fdb, false, L2SW_UNK_BUFFER_ID);
+    l2sw_mod_flow(NULL, l2sw, fdb, false, L2SW_UNK_BUFFER_ID);
     return 1;
 }
 #endif
@@ -223,80 +240,36 @@ l2sw_add(l2sw_hdl_t *l2sw_hdl, uint64_t dpid, c_ofp_switch_add_t *cofp_sa)
 static void
 l2sw_install_dfl_flows(uint64_t dpid)
 {
-    struct cbuf                 *b;
-    c_ofp_flow_mod_t            *cofp_fm;
-    uint32_t                    wildcards = OFPFW_ALL;
+    struct flow                 fl;
+
+    memset(&fl, 0, sizeof(fl));
 
     /* Clear all entries for this switch */
-    b = of_prep_msg(sizeof(*cofp_fm), C_OFPT_FLOW_MOD, 0);
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
-    cofp_fm->command = C_OFPC_DEL;
-    cofp_fm->flags = C_FL_ENT_NOCACHE;
-    cofp_fm->buffer_id = L2SW_UNK_BUFFER_ID;
-    wildcards = OFPFW_ALL;
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->priority = htons(C_FL_PRIO_DRP);
-    cofp_fm->oport = OFPP_NONE;
-    mul_app_command_handler(L2SW_APP_NAME, b);
-
-    /* Drop for invalid src mac or dst mac */
-    b = of_prep_msg(sizeof(*cofp_fm), C_OFPT_FLOW_MOD, 0); 
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
-    cofp_fm->command = C_OFPC_ADD;
-    cofp_fm->flags = C_FL_ENT_NOCACHE;
-    cofp_fm->buffer_id = L2SW_UNK_BUFFER_ID;
+    mul_app_send_flow_del(L2SW_APP_NAME, NULL, dpid, &fl,
+                          OFPFW_ALL, OFPP_NONE, C_FL_ENT_NOCACHE);
 
     /* Zero DST MAC Drop */
-    wildcards = OFPFW_ALL;
-    wildcards &= ~(OFPFW_DL_DST);
-
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->priority = htons(C_FL_PRIO_DRP);
-
-    mul_app_command_handler(L2SW_APP_NAME, b);
+    mul_app_send_flow_add(L2SW_APP_NAME, NULL, dpid, &fl, L2SW_UNK_BUFFER_ID,
+                          NULL, 0, 0, 0, OFPFW_ALL & ~(OFPFW_DL_DST),
+                          C_FL_PRIO_DRP, C_FL_ENT_NOCACHE);
 
     /* Zero SRC MAC Drop */
-    b = of_prep_msg(sizeof(*cofp_fm), C_OFPT_FLOW_MOD, 0); 
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
-    cofp_fm->command = C_OFPC_ADD;
-    cofp_fm->flags = C_FL_ENT_NOCACHE;
-    cofp_fm->buffer_id = L2SW_UNK_BUFFER_ID;
-
-    wildcards = OFPFW_ALL;
-    wildcards &= ~(OFPFW_DL_SRC);
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->priority = htons(C_FL_PRIO_DRP);
-    mul_app_command_handler(L2SW_APP_NAME, b);
+    mul_app_send_flow_add(L2SW_APP_NAME, NULL, dpid, &fl, L2SW_UNK_BUFFER_ID,
+                          NULL, 0, 0, 0, OFPFW_ALL & ~(OFPFW_DL_SRC),
+                          C_FL_PRIO_DRP, C_FL_ENT_NOCACHE);
 
     /* Broadcast SRC MAC Drop */
-    b = of_prep_msg(sizeof(*cofp_fm), C_OFPT_FLOW_MOD, 0); 
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
-    cofp_fm->command = C_OFPC_ADD;
-    cofp_fm->flags = C_FL_ENT_NOCACHE;
-    cofp_fm->buffer_id = L2SW_UNK_BUFFER_ID;
-
-    wildcards = OFPFW_ALL;
-    wildcards &= ~(OFPFW_DL_SRC);
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->priority = htons(C_FL_PRIO_DRP);
-    memset(cofp_fm->flow.dl_src, 0xff, OFP_ETH_ALEN);
-    mul_app_command_handler(L2SW_APP_NAME, b);
+    memset(&fl.dl_src, 0xff, OFP_ETH_ALEN);
+    mul_app_send_flow_add(L2SW_APP_NAME, NULL, dpid, &fl, L2SW_UNK_BUFFER_ID,
+                          NULL, 0, 0, 0, OFPFW_ALL & ~(OFPFW_DL_SRC),
+                          C_FL_PRIO_DRP, C_FL_ENT_NOCACHE);
 
 #ifdef CONFIG_L2SW_FDB_CACHE
     /* Send any unknown flow to app */
-    b = of_prep_msg(sizeof(*cofp_fm), C_OFPT_FLOW_MOD, 0); 
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
-    cofp_fm->command = C_OFPC_ADD;
-    wildcards = OFPFW_ALL;
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->flags = C_FL_ENT_LOCAL;
-    cofp_fm->priority = htons(C_FL_PRIO_DFL);
-    mul_app_command_handler(L2SW_APP_NAME, b);
+    memset(&fl, 0, sizeof(fl));
+    mul_app_send_flow_add(L2SW_APP_NAME, NULL, dpid, &fl, L2SW_UNK_BUFFER_ID,
+                          NULL, 0, 0, 0, OFPFW_ALL, C_FL_PRIO_DFL, 
+                          C_FL_ENT_LOCAL);
 #endif
 }
 
@@ -313,61 +286,42 @@ static int l2sw_del(l2sw_hdl_t *l2sw_hdl, uint64_t dpid)
     return 0;
 }
 
-static int
-l2sw_set_fp_ops(l2sw_t *l2sw)
-{
-    c_ofp_set_fp_ops_t  *cofp_fp;
-    struct cbuf         *b;
-
-    b = of_prep_msg(sizeof(*cofp_fp), C_OFPT_SET_FPOPS, 0);
-
-    cofp_fp = (void *)(b->data);
-    cofp_fp->datapath_id = htonll(l2sw->swid); 
-    cofp_fp->fp_type = htonl(C_FP_TYPE_L2);
-
-    return mul_app_command_handler(L2SW_APP_NAME, b);
-}
 
 int 
-l2sw_mod_flow(l2sw_t *l2sw, l2fdb_ent_t *fdb, bool add_del, uint32_t buffer_id)
+l2sw_mod_flow(void *arg, l2sw_t *l2sw, l2fdb_ent_t *fdb, 
+              bool add, uint32_t buffer_id)
 {
-    c_ofp_flow_mod_t            *cofp_fm;
-    struct ofp_action_output    *op_act;
+    struct ofp_action_output    op_act, *p_op_act = NULL;
     uint32_t                    wildcards = OFPFW_ALL;
-    struct cbuf                 *b;
-    size_t                      tot_len = 0;
+    struct flow                 fl = { 0 , 0, 0, 0, 0, 0, 0, 
+                                      { 0, 0, 0, 0, 0, 0} ,
+                                      { 0, 0, 0, 0, 0, 0} ,
+                                      0, 0, 0, { 0, 0, 0 },
+                                      };
 
-    tot_len = add_del ? sizeof(*cofp_fm) + sizeof(*op_act) : 
-                        sizeof(*cofp_fm); 
-
-    b = of_prep_msg(tot_len, C_OFPT_FLOW_MOD, 0);
-
-    cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(l2sw->swid);
-    cofp_fm->command = add_del ? C_OFPC_ADD : C_OFPC_DEL;
-    cofp_fm->flags = C_FL_ENT_NOCACHE;
-    memcpy(&cofp_fm->flow.dl_dst, fdb->mac_da, OFP_ETH_ALEN);
     wildcards &= ~(OFPFW_DL_DST);
-    cofp_fm->wildcards = htonl(wildcards);
-    cofp_fm->priority = htons(C_FL_PRIO_DFL);
-    cofp_fm->itimeo = htons(L2FDB_ITIMEO_DFL);
-    cofp_fm->htimeo = htons(L2FDB_HTIMEO_DFL);
-    cofp_fm->buffer_id = htonl(buffer_id);
-    cofp_fm->oport = OFPP_NONE;
+    memcpy(&fl.dl_dst, fdb->mac_da, OFP_ETH_ALEN);
 
-    if (add_del) {
-        op_act = (void *)(cofp_fm+1);
-        of_make_action_output((char **)&op_act, 
+    if (add) { 
+        p_op_act = &op_act;
+        of_make_action_output((char **)&p_op_act, 
                               sizeof(struct ofp_action_output),
                               fdb->lrn_port);
+        mul_app_send_flow_add(L2SW_APP_NAME, arg, l2sw->swid, &fl, buffer_id,
+                              p_op_act, sizeof(struct ofp_action_output),
+                              L2FDB_ITIMEO_DFL, L2FDB_HTIMEO_DFL,
+                              wildcards, C_FL_PRIO_DFL, C_FL_ENT_NOCACHE);
+    } else {
+        mul_app_send_flow_del(L2SW_APP_NAME, arg, l2sw->swid, &fl,
+                              wildcards, OFPP_NONE, C_FL_ENT_NOCACHE);
     }
-    mul_app_command_handler(L2SW_APP_NAME, b);
 
     return 0;
 }
 
 static int __fastpath
-l2sw_learn_and_fwd(l2sw_hdl_t *l2sw_hdl, uint64_t dpid,
+l2sw_learn_and_fwd(void *opaque_c_arg, 
+                   l2sw_hdl_t *l2sw_hdl, uint64_t dpid,
                    struct flow *fl, struct cbuf *pkt)
 {
     l2sw_t                      *l2sw = NULL;
@@ -375,11 +329,9 @@ l2sw_learn_and_fwd(l2sw_hdl_t *l2sw_hdl, uint64_t dpid,
     l2fdb_ent_t                 *fdb;
 #endif
     uint32_t                    oport = OFPP_ALL;
-    struct cbuf                 *b = NULL;     
     size_t                      pkt_len, pkt_ofs;
-    void                        *out_data;
-    struct ofp_action_output    *op_act;
-    struct c_ofp_packet_out     *cofp_po;
+    struct of_pkt_out_params    parms;
+    struct ofp_action_output    op_act;
     struct c_ofp_packet_in      *opi =(void *)(pkt->data);
 
     /* Check packet validity */
@@ -410,9 +362,9 @@ l2sw_learn_and_fwd(l2sw_hdl_t *l2sw_hdl, uint64_t dpid,
     if (fdb) { 
         /* Station moved ? */
         if (ntohs(fl->in_port) != fdb->lrn_port) {
-            l2sw_mod_flow(l2sw, fdb, false, (uint32_t)(-1));
+            l2sw_mod_flow(opaque_c_arg, l2sw, fdb, false, (uint32_t)(-1));
             fdb->lrn_port = ntohs(fl->in_port); 
-            l2sw_mod_flow(l2sw, fdb, true, (uint32_t)(-1));
+            l2sw_mod_flow(opaque_c_arg, l2sw, fdb, true, (uint32_t)(-1));
         }  
 
         goto l2_fwd;
@@ -427,7 +379,7 @@ l2_fwd:
     fdb = g_hash_table_lookup(l2sw->l2fdb_htbl, fl->dl_dst);
     if (fdb) { 
         oport = fdb->lrn_port;
-        l2sw_mod_flow(l2sw, fdb, true, ntohl(opi->buffer_id));
+        l2sw_mod_flow(opaque_c_arg, l2sw, fdb, true, ntohl(opi->buffer_id));
         c_wr_unlock(&l2sw->lock);
         l2sw_put(l2sw); 
         return 0;
@@ -442,25 +394,15 @@ l2_fwd:
         pkt_len = 0;
     }
 
-    b = of_prep_msg(sizeof(*cofp_po) + sizeof(*op_act) + pkt_len,
-                    OFPT_PACKET_OUT, 0);
 
-    cofp_po = (void *)(b->data);
-    cofp_po->datapath_id = htonll(dpid);
-    cofp_po->in_port = opi->in_port;
-    cofp_po->buffer_id = opi->buffer_id;
-    cofp_po->actions_len = htons(sizeof(*op_act));
-
- 
-    op_act = (void *)(cofp_po+1);
-    of_make_action_output((char **)&op_act, sizeof(*op_act), oport);
-
-    if (pkt_len) {
-        out_data = (void *)(op_act + 1);
-        memcpy(out_data, opi->data, pkt_len);
-    }
-
-    mul_app_command_handler(L2SW_APP_NAME, b);
+    parms.buffer_id = ntohl(opi->buffer_id);
+    parms.in_port = ntohs(opi->in_port);
+    parms.action_list = &op_act;
+    of_make_action_output((char **)&parms.action_list, sizeof(op_act), oport);
+    parms.action_len = sizeof(op_act);
+    parms.data_len = pkt_len;
+    parms.data = opi->data;
+    mul_app_send_pkt_out(opaque_c_arg, l2sw->swid, &parms);
 
     return 0;
 }
@@ -576,7 +518,7 @@ l2sw_port_handler(l2sw_hdl_t *l2sw_hdl, uint64_t dpid,
 }
 
 static void __fastpath
-l2sw_event_notifier(void *app_arg UNUSED, void *pkt_arg)
+l2sw_event_notifier(void *app_arg, void *pkt_arg)
 {
     struct cbuf         *b = pkt_arg;
     struct ofp_header   *hdr;
@@ -605,7 +547,7 @@ l2sw_event_notifier(void *app_arg UNUSED, void *pkt_arg)
         {
             c_ofp_packet_in_t *ofp_pin = (void *)(hdr);
 
-            l2sw_learn_and_fwd(l2sw_hdl, ntohll(ofp_pin->datapath_id),
+            l2sw_learn_and_fwd(app_arg, l2sw_hdl, ntohll(ofp_pin->datapath_id),
                                &ofp_pin->fl, b);
             break;
         }

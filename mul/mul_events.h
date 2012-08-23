@@ -20,8 +20,6 @@
 #ifndef __MUL_EVENTS_H__
 #define __MUL_EVENTS_H__
 
-#define HAVE_SG_TX 1
-
 /* Cast to struct event */
 #define C_EVENT(x) ((struct event *)(x))
 

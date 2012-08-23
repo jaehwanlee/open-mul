@@ -331,6 +331,12 @@ c_socket_write_nonblock_loop(c_conn_t *conn,
     int         sent_sz;
     int         err = 0;
 
+    if (unlikely(conn->dead)) {
+        cbuf_list_purge(&conn->tx_q);
+        err = -1;
+        goto out;
+    }
+
     while ((buf = cbuf_list_dequeue(&conn->tx_q))) {
 
         sent_sz = send(conn->fd, buf->data, buf->len, MSG_NOSIGNAL);
@@ -340,6 +346,7 @@ c_socket_write_nonblock_loop(c_conn_t *conn,
                 conn->tx_err++;
                 goto sched_tx_event;
             }
+            conn->dead = 1;
             err = -1;
             goto out;
         }

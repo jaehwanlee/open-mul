@@ -184,6 +184,7 @@ c_switch_read_nonblock_loop(int fd, void *arg, c_conn_t *conn,
 
             proc_msg(arg, &curr_b);
             cbuf_pull(b, curr_b.len);
+
             c_thread_sg_tx_sync(conn);
         }
     }
@@ -201,6 +202,7 @@ c_switch_thread_read(evutil_socket_t fd, short events UNUSED, void *arg)
     ret = c_switch_read_nonblock_loop(fd, sw, &sw->conn, OFC_RCV_BUF_SZ,
                                       of_switch_recv_msg);
     if (c_recvd_sock_dead(ret)) {
+        sw->conn.dead = 1;
         c_worker_do_switch_del(w_ctx, sw);
     } 
 
@@ -221,6 +223,7 @@ c_app_thread_read(evutil_socket_t fd, short events UNUSED, void *arg)
     if (c_recvd_sock_dead(ret)) {
         c_log_err("Application socket dead");
         perror("app-socket");
+        app->app_conn.dead = 1;
         c_worker_do_app_del(app_ctx, app);
     } 
 
