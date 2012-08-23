@@ -21,6 +21,18 @@
 void *c_thread_main(void *arg);
 int  c_vty_thread_run(void *arg);
 
+int
+c_set_thread_dfl_affinity(void)
+{
+    extern ctrl_hdl_t ctrl_hdl;
+    cpu_set_t cpu;
+
+    /* Set cpu affinity */
+    CPU_ZERO(&cpu);
+    CPU_SET(ctrl_hdl.n_threads + ctrl_hdl.n_appthreads, &cpu);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpu);
+}
+
 /* TODO : Better Algo */
 int
 c_get_new_switch_worker(struct c_main_ctx *m_ctx) 
@@ -105,6 +117,7 @@ c_alloc_thread_ctx(struct thread_alloc_args *args)
 static int
 c_worker_thread_final_init(struct c_worker_ctx *w_ctx)
 {
+    cpu_set_t           cpu;
     char                ipc_path_str[64];
     struct timeval      tv = { C_PER_WORKER_TIMEO, 0 };
 
@@ -125,6 +138,11 @@ c_worker_thread_final_init(struct c_worker_ctx *w_ctx)
                                             c_per_worker_timer_event, 
                                             (void *)w_ctx);
     evtimer_add(w_ctx->worker_timer_event, &tv);
+
+    /* Set cpu affinity */
+    CPU_ZERO(&cpu);
+    CPU_SET(w_ctx->thread_idx, &cpu);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpu);
 
     w_ctx->cmn_ctx.run_state = THREAD_STATE_RUNNING;
 
@@ -183,12 +201,6 @@ c_main_thread_final_init(struct c_main_ctx *m_ctx)
 
     }
 
-    /* VTY thread creation */    
-    t_args.thread_type = THREAD_VTY;
-    vty_ctx = c_alloc_thread_ctx(&t_args);
-    assert(vty_ctx);
-    pthread_create(&vty_ctx->cmn_ctx.thread, NULL, c_thread_main, vty_ctx);
-
     /* Application thread creation */
     for (thread_idx = 0; thread_idx < m_ctx->n_appthreads; thread_idx++) {
         app_ctx_slot = c_tid_to_app_ctx_slot(m_ctx, thread_idx);
@@ -216,6 +228,14 @@ c_main_thread_final_init(struct c_main_ctx *m_ctx)
 
     }
 
+    /* VTY thread creation */    
+    t_args.thread_type = THREAD_VTY;
+    vty_ctx = c_alloc_thread_ctx(&t_args);
+    assert(vty_ctx);
+    pthread_create(&vty_ctx->cmn_ctx.thread, NULL, c_thread_main, vty_ctx);
+
+
+
     /* Switch listener */
     c_listener = c_server_socket_create(INADDR_ANY, C_LISTEN_PORT);
     assert(c_listener > 0);
@@ -232,6 +252,8 @@ c_main_thread_final_init(struct c_main_ctx *m_ctx)
                                           c_app_accept, (void*)m_ctx);
     event_add(m_ctx->c_app_accept_event, NULL);
     m_ctx->cmn_ctx.run_state = THREAD_STATE_RUNNING;
+
+    c_set_thread_dfl_affinity();
 
     c_log_debug("%s: running tid(%u)", __FUNCTION__, (unsigned int)pthread_self());
     return 0;
@@ -282,32 +304,54 @@ c_worker_thread_run(struct c_worker_ctx *w_ctx)
 }
 
 static int
-c_app_thread_run(struct c_app_ctx *app_ctx)
+c_app_thread_pre_init(struct c_app_ctx *app_ctx)
 {
     char    ipc_path_str[64];
 
-    switch(app_ctx->cmn_ctx.run_state) {
-    case THREAD_STATE_PRE_INIT:
-        signal(SIGPIPE, SIG_IGN);
-        app_ctx->cmn_ctx.base = event_base_new();
-        assert(app_ctx->cmn_ctx.base);
+    signal(SIGPIPE, SIG_IGN);
+    app_ctx->cmn_ctx.base = event_base_new();
+    assert(app_ctx->cmn_ctx.base);
 
-        snprintf(ipc_path_str, 63, "%s%d", C_IPC_APP_PATH, app_ctx->thread_idx);
-        app_ctx->main_wrk_conn.rd_fd = open(ipc_path_str, 
+    snprintf(ipc_path_str, 63, "%s%d", C_IPC_APP_PATH, app_ctx->thread_idx);
+    app_ctx->main_wrk_conn.rd_fd = open(ipc_path_str,
                                             O_RDONLY | O_NONBLOCK);
-        assert(app_ctx->main_wrk_conn.rd_fd > 0);
+    assert(app_ctx->main_wrk_conn.rd_fd > 0);
 
-        app_ctx->main_wrk_conn.rd_event = event_new(app_ctx->cmn_ctx.base,
+    app_ctx->main_wrk_conn.rd_event = event_new(app_ctx->cmn_ctx.base,
                                          app_ctx->main_wrk_conn.rd_fd,
                                          EV_READ|EV_PERSIST,
                                          c_worker_ipc_read, (void*)app_ctx);
-        event_add(app_ctx->main_wrk_conn.rd_event, NULL);
+    event_add(app_ctx->main_wrk_conn.rd_event, NULL);
+    app_ctx->cmn_ctx.run_state = THREAD_STATE_FINAL_INIT;
 
-        app_ctx->cmn_ctx.run_state = THREAD_STATE_FINAL_INIT;
-        break;
+    return 0;
+}
+
+static int
+c_app_thread_final_init(struct c_app_ctx *app_ctx)
+{
+    extern ctrl_hdl_t ctrl_hdl;
+    cpu_set_t cpu;
+
+    /* Set cpu affinity */
+    CPU_ZERO(&cpu);
+    CPU_SET(app_ctx->thread_idx + ctrl_hdl.n_threads, &cpu);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpu);
+
+    c_builtin_app_start(app_ctx);
+    app_ctx->cmn_ctx.run_state = THREAD_STATE_RUNNING;
+
+    return 0;
+}
+
+static int
+c_app_thread_run(struct c_app_ctx *app_ctx)
+{
+    switch(app_ctx->cmn_ctx.run_state) {
+    case THREAD_STATE_PRE_INIT:
+        return c_app_thread_pre_init(app_ctx);
     case THREAD_STATE_FINAL_INIT:
-        c_builtin_app_start(app_ctx);
-        app_ctx->cmn_ctx.run_state = THREAD_STATE_RUNNING;
+        return c_app_thread_final_init(app_ctx);
     case THREAD_STATE_RUNNING:
         return c_thread_event_loop((void *)app_ctx);
     }

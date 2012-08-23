@@ -79,6 +79,9 @@ typedef struct ctrl_hdl_ {
 
     void                     *vty_master;
 
+    int                      n_threads;
+    int                      n_appthreads;
+
 } ctrl_hdl_t;
 
 

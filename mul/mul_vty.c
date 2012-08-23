@@ -1214,6 +1214,8 @@ c_vty_thread_run(void *arg)
     struct c_vty_ctx    *vty_ctx = arg;
     ctrl_hdl_t          *c_hdl = vty_ctx->cmn_ctx.c_hdl; 
 
+    c_set_thread_dfl_affinity();
+
     signal(SIGPIPE, SIG_IGN);
 
     /* Register vty as an app for static flow install */

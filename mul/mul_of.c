@@ -1917,13 +1917,16 @@ of_switch_recv_msg(void *sw_arg, struct cbuf *b)
 }
     
 int
-of_ctrl_init(ctrl_hdl_t *c_hdl, size_t nthreads)
+of_ctrl_init(ctrl_hdl_t *c_hdl, size_t nthreads, size_t n_appthreads)
 {
     memset (c_hdl, 0, sizeof(ctrl_hdl_t));
     c_rw_lock_init(&c_hdl->lock);
 
     c_hdl->worker_ctx_list = (struct c_cmn_ctx **)malloc(nthreads * sizeof(void *));
     assert(c_hdl->worker_ctx_list);
+
+    c_hdl->n_threads = nthreads;
+    c_hdl->n_appthreads = n_appthreads;
 
     return 0;
 }

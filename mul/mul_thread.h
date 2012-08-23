@@ -179,6 +179,7 @@ c_ipc_hdr_valid(void *h_arg)
 int     c_thread_start(void *c_hdl, int nthreads, int n_appthreads);
 int     c_get_new_switch_worker(struct c_main_ctx *m_ctx);
 int     c_get_new_app_worker(struct c_main_ctx *m_ctx);
+int     c_set_thread_dfl_affinity(void);
 
 static inline int
 c_tid_to_ipc_wr_fd(struct c_main_ctx *m_ctx, int t_idx)

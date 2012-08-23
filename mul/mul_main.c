@@ -106,7 +106,7 @@ main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
 
     /* initialize controller handler */
-    of_ctrl_init(&ctrl_hdl, sthreads);
+    of_ctrl_init(&ctrl_hdl, sthreads, athreads);
 
     clog_default = openclog (progname, CLOG_MUL,
                              LOG_CONS|LOG_NDELAY|LOG_PID, LOG_DAEMON);

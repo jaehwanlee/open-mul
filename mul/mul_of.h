@@ -100,7 +100,7 @@ int             of_dfl_fwd(struct c_switch *sw, struct cbuf *b, void *data,
                            size_t pkt_len, struct flow *fl, uint16_t in_port);
 int             of_dfl_port_status(c_switch_t *sw, uint32_t cfg, uint32_t state);
 
-int             of_ctrl_init(ctrl_hdl_t *c_hdl, size_t nthreads);
+int             of_ctrl_init(ctrl_hdl_t *c_hdl, size_t nthreads, size_t n_appthreads);
 
 
 #endif
