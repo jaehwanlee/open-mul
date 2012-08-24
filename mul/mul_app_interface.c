@@ -836,6 +836,9 @@ mul_app_send_flow_add(void *app_name, void *sw_arg, uint64_t dpid, struct flow *
         atomic_inc(&sw->ref, 1);
     }
 
+    /* All internal fns expected network byte order */
+    wildcards = htonl(wildcards);
+
     if (flags & C_FL_ENT_NOCACHE) {
         ret = of_send_flow_add_nocache(sw, fl, buffer_id, actions, action_len,
                                        itimeo, htimeo, wildcards, prio);
@@ -852,7 +855,7 @@ mul_app_send_flow_add(void *app_name, void *sw_arg, uint64_t dpid, struct flow *
     memset(&fl_parms, 0, sizeof(fl_parms));
     fl_parms.app_owner = app;
     fl_parms.flow = fl;
-    fl_parms.wildcards = htonl(wildcards);
+    fl_parms.wildcards = wildcards;
     fl_parms.buffer_id = buffer_id;
     fl_parms.flags = flags;
     fl_parms.prio = prio;

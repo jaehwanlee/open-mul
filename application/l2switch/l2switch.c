@@ -298,7 +298,6 @@ l2sw_mod_flow(void *arg, l2sw_t *l2sw, l2fdb_ent_t *fdb,
                                       { 0, 0, 0, 0, 0, 0} ,
                                       0, 0, 0, { 0, 0, 0 },
                                       };
-
     wildcards &= ~(OFPFW_DL_DST);
     memcpy(&fl.dl_dst, fdb->mac_da, OFP_ETH_ALEN);
 
@@ -379,21 +378,16 @@ l2_fwd:
     fdb = g_hash_table_lookup(l2sw->l2fdb_htbl, fl->dl_dst);
     if (fdb) { 
         oport = fdb->lrn_port;
-        l2sw_mod_flow(opaque_c_arg, l2sw, fdb, true, ntohl(opi->buffer_id));
-        c_wr_unlock(&l2sw->lock);
-        l2sw_put(l2sw); 
-        return 0;
+        l2sw_mod_flow(opaque_c_arg, l2sw, fdb, true, L2SW_UNK_BUFFER_ID);
     } 
     c_wr_unlock(&l2sw->lock);
 #endif
 
     l2sw_put(l2sw); 
 
-
     if (opi->buffer_id != L2SW_UNK_BUFFER_ID) {
         pkt_len = 0;
     }
-
 
     parms.buffer_id = ntohl(opi->buffer_id);
     parms.in_port = ntohs(opi->in_port);
