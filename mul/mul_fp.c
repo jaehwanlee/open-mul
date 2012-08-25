@@ -136,15 +136,14 @@ c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len,
     c_l2fdb_learn(sw, in_flow->dl_src, in_port);
 
     if ((ent = c_l2fdb_lookup(sw, in_flow->dl_dst))) {
-
-        op_act.port = ent->port;
-        of_send_flow_add_nocache(sw, in_flow,  ntohl(opi->buffer_id),
+        op_act.port = htons(ent->port);
+        of_send_flow_add_nocache(sw, in_flow, ntohl(opi->buffer_id),
                                  &op_act, sizeof(op_act), 60, 0, 
                                  htonl(OFPFW_ALL & ~(OFPFW_DL_DST)), 
                                  C_FL_PRIO_DFL);
     }
 
-    if (ent && opi->buffer_id == (uint32_t)(-1)) {
+    if (ent && (opi->buffer_id != (uint32_t)(-1))) {
         c_wr_unlock(&sw->lock);
         return 0;
     }
