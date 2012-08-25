@@ -26,31 +26,6 @@
 
 #define L2SW_UNK_BUFFER_ID (0xffffffff)
 
-static inline bool is_zero_ether_addr(const uint8_t *addr)
-{
-    return !(addr[0] | addr[1] | addr[2] | addr[3] | addr[4] | addr[5]);
-}
-
-static inline bool is_multicast_ether_addr(const uint8_t *addr)
-{
-    return 0x01 & addr[0];
-}
-
-static inline bool is_local_ether_addr(const uint8_t *addr)
-{
-    return 0x02 & addr[0];
-}
-
-static inline bool is_broadcast_ether_addr(const uint8_t *addr)
-{
-    return (addr[0] & addr[1] & addr[2] & addr[3] & addr[4] & addr[5]) == 0xff;
-}
-
-static inline bool is_unicast_ether_addr(const uint8_t *addr)
-{
-    return !is_multicast_ether_addr(addr);
-}
-
 struct l2fdb_ent_
 {
     uint8_t  mac_da[OFP_ETH_ALEN];

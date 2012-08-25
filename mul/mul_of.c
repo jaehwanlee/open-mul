@@ -359,6 +359,10 @@ of_switch_put(c_switch_t *sw)
         c_log_debug("sw (0x:%llx) freed", sw->DPID);
         cbuf_list_purge(&sw->conn.tx_q);
         of_switch_flow_tbl_delete(sw);
+
+        if (sw->fp_ops.fp_db_dtor) {
+            sw->fp_ops.fp_db_dtor(sw);
+        }
         free(sw);
     } else {
         //c_log_debug("sw (0x:%llx) ref (%u)", sw->DPID, 
@@ -1220,11 +1224,6 @@ of_switch_flow_tbl_delete(c_switch_t *sw)
     tbl = &sw->exm_flow_tbl;
     if (tbl->exm_fl_hash_tbl) {
         g_hash_table_destroy(tbl->exm_fl_hash_tbl);
-    }
-
-    tbl = &sw->app_flow_tbl;
-    if (tbl->exm_fl_hash_tbl && tbl->dtor) {
-         tbl->dtor(sw, tbl);
     }
 
     c_wr_unlock(&sw->lock);

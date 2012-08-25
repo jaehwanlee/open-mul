@@ -369,7 +369,7 @@ of_prep_pkt_out_msg(struct of_pkt_out_params *parms)
     tot_len = sizeof(struct ofp_packet_out) + parms->action_len
                 + parms->data_len;
 
-    b = of_prep_msg(tot_len, OFPT_PACKET_OUT, 0);
+    b = of_prep_msg(tot_len, OFPT_PACKET_OUT, (unsigned long)parms->data);
 
     out = (void *)b->data;
     out->buffer_id = htonl(parms->buffer_id);

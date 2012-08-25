@@ -21,8 +21,6 @@
 #include "mul_vty.h"
 #include "l2switch.h"
 
-#define CONFIG_L2SW_FDB_CACHE 1
-
 l2port_t *l2sw_port_find(l2sw_t *sw, uint16_t port_no);
 int l2sw_mod_flow(void *arg, l2sw_t *l2sw, l2fdb_ent_t *fdb, 
                   bool add_del, uint32_t buffer_id);

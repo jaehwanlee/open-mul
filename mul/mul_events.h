@@ -32,6 +32,8 @@ void    c_worker_ipc_read(evutil_socket_t listener, short event, void *arg);
 void    c_per_worker_timer_event(evutil_socket_t fd, short event, void *arg);
 void    c_switch_thread_write_event(evutil_socket_t fd, short events, void *arg);
 
+#define HAVE_SG_TX 1
+
 #ifdef HAVE_SG_TX
 static inline void
 c_thread_sg_tx_sync(void *conn_arg)

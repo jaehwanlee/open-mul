@@ -1062,11 +1062,24 @@ c_app_set_fpops_command(void *app_arg, struct cbuf *b, void *data)
     case C_FP_TYPE_DFL:
         sw->fp_ops.fp_fwd = of_dfl_fwd;
         sw->fp_ops.fp_port_status = of_dfl_port_status;
+        if (sw->fp_ops.fp_db_dtor) {
+            sw->fp_ops.fp_db_dtor(sw);
+        }
+        sw->fp_ops.fp_db_dtor = NULL;
+        sw->fp_ops.fp_db_ctor = NULL;
         c_log_err("Switch <%llx> fp set to default", sw->DPID);
         break;
     case C_FP_TYPE_L2:
         sw->fp_ops.fp_fwd = c_l2_lrn_fwd;
         sw->fp_ops.fp_port_status = c_l2_port_status;
+        if (sw->fp_ops.fp_db_dtor) {
+            sw->fp_ops.fp_db_dtor(sw);
+        }
+        sw->fp_ops.fp_db_dtor = c_l2fdb_destroy;
+        sw->fp_ops.fp_db_ctor = c_l2fdb_init;
+
+        sw->fp_ops.fp_db_ctor(sw);
+
         c_log_err("Switch <%llx> fp set to L2", sw->DPID);
         break;
     default:

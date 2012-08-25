@@ -141,6 +141,9 @@ struct c_switch_fp_ops
     int (*fp_fwd)(struct c_switch *sw, struct cbuf *b, void *in_data, size_t len, 
                   struct flow *in_flow, uint16_t iport);
     int (*fp_port_status)(struct c_switch *sw, uint32_t cfg, uint32_t state);
+
+    int (*fp_db_ctor)(struct c_switch *sw);
+    void (*fp_db_dtor)(struct c_switch *sw);
 };
 
 typedef struct c_sw_ports {
@@ -220,7 +223,7 @@ struct c_switch
     ctrl_hdl_t              *c_hdl;         /* controller handle */ 
 #define DPID datapath_id
     unsigned long long int  datapath_id;	/* DP id */
-    c_flow_tbl_t            app_flow_tbl;   
+    void                    *app_flow_tbl;   
     c_flow_tbl_t            exm_flow_tbl;
 #define C_RULE_FLOW_TBL_DFL   0
 #define C_MAX_RULE_FLOW_TBLS  1
@@ -266,6 +269,8 @@ struct c_port_cfg_state_mask
 int     c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b, void *opi, size_t pkt_len, 
                      struct flow *in_flow, uint16_t in_port); 
 int     c_l2_port_status(c_switch_t *sw, uint32_t cfg, uint32_t state);
+int     c_l2fdb_init(c_switch_t *sw);
+void    c_l2fdb_destroy(c_switch_t *sw);
 void    c_ipc_msg_rcv(void *ctx_arg, struct cbuf *buf);
 int     c_send_unicast_ipc_msg(int fd, void *msg);
 void    *alloc_ipc_msg(uint8_t ipc_type, uint16_t ipc_msg_type);

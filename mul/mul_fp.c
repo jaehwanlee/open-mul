@@ -20,94 +20,82 @@
  */
 
 #include "mul.h"
-
-
-static void
-c_l2fdb_ent_free(void *arg)
-{
-    free(arg);
-}
-
-static unsigned int
-c_l2fdb_key(const void *p)
-{
-    const struct flow *fl = p;
-
-    return hash_bytes(fl->dl_dst, OFP_ETH_ALEN, 1);
-}
+#include "mul_fp.h"
 
 static int
-c_l2fdb_equal(const void *p1, const void *p2)
+c_l2fdb_learn(c_switch_t *sw, uint8_t *mac, uint16_t port)
 {
-    const struct flow *fl_1 = p1;
-    const struct flow *fl_2 = p2;
+    c_l2fdb_bkt_t  *bkt = sw->app_flow_tbl;
+    unsigned int   bkt_idx = c_l2fdb_key(mac);
+    unsigned int   idx = 0;
+    c_l2fdb_ent_t  *ent, *emp_ent = NULL;;
+    
+    bkt += bkt_idx;
 
-    return !memcmp(fl_1->dl_dst, fl_2->dl_dst, OFP_ETH_ALEN);
+    while(idx < C_FDB_ENT_PER_BKT) {
+        ent = &bkt->fdb_ent[idx++];
+
+        if (!emp_ent && !ent->valid) {
+            emp_ent = ent;
+            continue;
+        } 
+
+        if (ent->valid && c_l2fdb_equal(mac, ent->mac)) {
+            /* FIXME : Delete it from h/w if installed */
+            ent->port = port;    
+            return 0;
+        }
+    } 
+
+    if (emp_ent)  {
+        c_l2fdb_ent_init(emp_ent, mac, port);
+        return 0;
+    }
+
+    /* FIXME : Add chaining and LRU phase out */
+    c_log_err("%s: Cant add entry. Full(%u)", FN, idx);
+    return -1;
 }
 
-static void
-c_l2_fdb_destroy(void *sw_arg UNUSED, void *tbl_arg)
+static inline c_l2fdb_ent_t * 
+c_l2fdb_lookup(c_switch_t *sw, uint8_t *mac)
 {
-    c_flow_tbl_t *tbl = tbl_arg;
+    c_l2fdb_bkt_t  *bkt = sw->app_flow_tbl;
+    unsigned int   bkt_idx = c_l2fdb_key(mac);
+    unsigned int   idx = 0;
+    c_l2fdb_ent_t  *ent;
 
-    if (tbl && tbl->exm_fl_hash_tbl) 
-        g_hash_table_destroy(tbl->exm_fl_hash_tbl);
+    bkt += bkt_idx;
 
+    while(idx < C_FDB_ENT_PER_BKT) {
+        ent = &bkt->fdb_ent[idx++];
+        if (ent->valid && c_l2fdb_equal(mac, ent->mac)) {
+            return ent;
+        } 
+    }
+
+    return NULL;
 }
 
-static int 
-c_l2_fdb_init(c_switch_t *sw)
+int 
+c_l2fdb_init(c_switch_t *sw)
 {
-    c_flow_tbl_t *tbl = &sw->app_flow_tbl;
+    sw->app_flow_tbl = calloc(1, sizeof(struct c_l2fdb_bkt) * C_L2FDB_SZ);
+    assert(sw->app_flow_tbl);
 
-    tbl->c_fl_tbl_type = C_TBL_EXM;
-    tbl->hw_tbl_idx = C_TBL_HW_IDX_DFL;
-    tbl->dtor = c_l2_fdb_destroy;
-    tbl->exm_fl_hash_tbl = g_hash_table_new_full(c_l2fdb_key,
-                                                 c_l2fdb_equal,
-                                                 NULL,
-                                                 c_l2fdb_ent_free);
     return 0;
 }
 
-static inline void 
-c_l2fdb_learn(c_switch_t *sw, uint8_t *mac, uint16_t port)
+void
+c_l2fdb_destroy(c_switch_t *sw)
 {
-    struct flow  fl;
-    c_fl_entry_t *ent;
-    struct ofp_action_output *op_act;
-    c_flow_tbl_t *tbl = &sw->app_flow_tbl;
+    c_wr_lock(&sw->lock);
 
-    memcpy(&fl.dl_dst, mac, OFP_ETH_ALEN);
-    ent = g_hash_table_lookup(tbl->exm_fl_hash_tbl, &fl);
-    if (ent) {
-        return;
-    }
+    if (sw->app_flow_tbl) free(sw->app_flow_tbl);
+    sw->app_flow_tbl = NULL;
 
-    ent = malloc(sizeof(*ent) + sizeof(*op_act));
-    assert(ent);
-
-    op_act = (void *)(ent + 1);
-    ent->actions = (void *)op_act;
-    ent->action_len =  sizeof(*op_act);
-    op_act->type = htons(OFPAT_OUTPUT);
-    op_act->len  = htons(sizeof(op_act));
-    op_act->port = htons(port);
-
-    g_hash_table_insert(tbl->exm_fl_hash_tbl, &fl, ent); 
+    c_wr_unlock(&sw->lock);
 }
-
-static inline c_fl_entry_t *
-c_l2fdb_lookup(c_switch_t *sw, struct flow *fl)
-{
-    c_fl_entry_t *ent;
-    c_flow_tbl_t *tbl = &sw->app_flow_tbl;
-    
-    ent = g_hash_table_lookup(tbl->exm_fl_hash_tbl, fl);
-
-    return ent;
-}
-
 
 /* 
  * c_l2_lrn_fwd - This is fast code which is supposed to know l2sw module's
@@ -115,7 +103,7 @@ c_l2fdb_lookup(c_switch_t *sw, struct flow *fl)
  * it can easily take advantage of controller's threaded features and run
  * in-thread-context. It offloads forwarding functions from the module itself.
  * (FIXME - This is not yet implemented fully. It will functionally work
- *  but there will be gaps in learning)
+ *  but there may be holes)
  */
 int __fastpath
 c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len, 
@@ -123,25 +111,41 @@ c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len,
 {
     struct ofp_packet_in *opi __aligned = (void *)(b->data);
     struct of_pkt_out_params parms;
-    struct ofp_action_output op_act, *p_act = NULL;
-    c_fl_entry_t *ent;
+    struct ofp_action_output op_act;
+    c_l2fdb_ent_t *ent;
 
-    if (unlikely(!sw->app_flow_tbl.exm_fl_hash_tbl)) {
-        c_l2_fdb_init(sw);
+    if (unlikely(!sw->app_flow_tbl)) {
+        c_log_warn("%s: L2 fdb tbl not found", FN);
+        return -1;
     }
 
+#ifdef L2_INVALID_ADDR_CHK 
+    if (is_zero_ether_addr(in_flow->dl_src) ||
+        is_zero_ether_addr(in_flow->dl_dst) ||
+        is_multicast_ether_addr(in_flow->dl_src) ||
+        is_broadcast_ether_addr(in_flow->dl_src)) {
+        c_log_debug("%s: Invalid src/dst mac addr", FN);
+        return -1;
+    }
+#endif
+
+    op_act.type = htons(OFPAT_OUTPUT);
+    op_act.len  = htons(sizeof(op_act));
+
+    c_wr_lock(&sw->lock);
     c_l2fdb_learn(sw, in_flow->dl_src, in_port);
 
-#if 0
-    if ((ent = c_l2fdb_lookup(sw, in_flow))) {
-        of_send_flow_add_nocache(sw, &ent->fl,  ntohl(opi->buffer_id),
-                                 ent->actions, ent->action_len, 60, 0, 
+    if ((ent = c_l2fdb_lookup(sw, in_flow->dl_dst))) {
+
+        op_act.port = ent->port;
+        of_send_flow_add_nocache(sw, in_flow,  ntohl(opi->buffer_id),
+                                 &op_act, sizeof(op_act), 60, 0, 
                                  htonl(OFPFW_ALL & ~(OFPFW_DL_DST)), 
                                  C_FL_PRIO_DFL);
-        p_act = (void *)(ent->actions);
     }
 
     if (ent && opi->buffer_id == (uint32_t)(-1)) {
+        c_wr_unlock(&sw->lock);
         return 0;
     }
 
@@ -152,12 +156,10 @@ c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len,
     parms.data = data;
     parms.data_len = parms.buffer_id == (uint32_t)(-1)? 0 : pkt_len;
 
-    op_act.type = htons(OFPAT_OUTPUT);
-    op_act.len  = htons(sizeof(op_act));
-    op_act.port = p_act ? p_act->port : htons(OFPP_ALL);
+    op_act.port = ent ? htons(ent->port) : htons(OFPP_ALL);
+    c_wr_unlock(&sw->lock);
 
     of_send_pkt_out(sw, &parms);
-#endif
 
     return 0;
 }
