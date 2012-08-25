@@ -1222,6 +1222,11 @@ of_switch_flow_tbl_delete(c_switch_t *sw)
         g_hash_table_destroy(tbl->exm_fl_hash_tbl);
     }
 
+    tbl = &sw->app_flow_tbl;
+    if (tbl->exm_fl_hash_tbl && tbl->dtor) {
+         tbl->dtor(sw, tbl);
+    }
+
     c_wr_unlock(&sw->lock);
 }
 

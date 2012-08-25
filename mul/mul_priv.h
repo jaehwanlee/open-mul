@@ -209,6 +209,7 @@ typedef struct c_flow_tbl_
         GHashTable   *exm_fl_hash_tbl;
         GSList       *rule_fl_tbl; /* Would change */ 
     };
+    void (*dtor)(void *sw, void *tbl);
 } c_flow_tbl_t;
 
 /* controller's switch abstraction */
@@ -219,12 +220,13 @@ struct c_switch
     ctrl_hdl_t              *c_hdl;         /* controller handle */ 
 #define DPID datapath_id
     unsigned long long int  datapath_id;	/* DP id */
+    c_flow_tbl_t            app_flow_tbl;   
     c_flow_tbl_t            exm_flow_tbl;
 #define C_RULE_FLOW_TBL_DFL   0
 #define C_MAX_RULE_FLOW_TBLS  1
     c_flow_tbl_t            rule_flow_tbls[C_MAX_RULE_FLOW_TBLS];
-    GSList                  *app_list; /* app list intereseted in switch */
-    GSList                  *app_eventq;         /* app event queue */
+    GSList                  *app_list;      /* app list intereseted in switch */
+    GSList                  *app_eventq;    /* app event queue */
 
     c_conn_t                conn;
 
