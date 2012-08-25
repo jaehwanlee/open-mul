@@ -49,7 +49,7 @@ c_l2fdb_key(const void *arg)
     const uint8_t *p = arg;
     unsigned int idx;
 
-    idx = (p[4] << 24) |  (p[3] << 16) | p[2] << 8 | p[1];
+    idx = (p[4] << 24) |  ((p[3] ^ p[5]) << 16) | p[2] << 8 | (p[1]);
     return idx % C_L2FDB_SZ;
 }
 
