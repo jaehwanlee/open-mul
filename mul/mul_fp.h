@@ -22,25 +22,26 @@
 #define __MUL_FP_H__
 
 #define C_L2FDB_SZ (1048576)
-#define C_FDB_ENT_PER_BKT 3
+#define C_FDB_ENT_PER_BKT 2
 
 struct c_l2fdb_ent
 {
-    uint8_t  mac[OFP_ETH_ALEN];
+    uint64_t timestamp;
+    uint32_t pad;
     uint16_t port;
     uint16_t valid;
-    uint64_t timestamp;
+    uint8_t  mac[OFP_ETH_ALEN];
 };
 typedef struct c_l2fdb_ent c_l2fdb_ent_t;
 
 struct c_l2fdb_bkt
 {
-    struct c_l2fdb_ent fdb_ent[C_FDB_ENT_PER_BKT];
+    struct c_l2fdb_ent fdb_ent[C_FDB_ENT_PER_BKT] __attribute__((aligned(8)));
     uint8_t  pad[16];
 };
 typedef struct c_l2fdb_bkt c_l2fdb_bkt_t;
 
-//OFP_ASSERT(sizeof(struct c_ofp_port_status)== 64);
+OFP_ASSERT(sizeof(c_l2fdb_bkt_t) == 64);
 
 static inline unsigned int
 c_l2fdb_key(const void *arg)
