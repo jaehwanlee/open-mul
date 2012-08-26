@@ -29,7 +29,8 @@ struct c_l2fdb_ent
     uint64_t timestamp;
     uint32_t pad;
     uint16_t port;
-    uint16_t valid;
+    uint8_t  valid;
+    uint8_t  installed;
     uint8_t  mac[OFP_ETH_ALEN];
 };
 typedef struct c_l2fdb_ent c_l2fdb_ent_t;
