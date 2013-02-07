@@ -244,7 +244,7 @@ l2sw_install_dfl_flows(uint64_t dpid)
 
     /* Clear all entries for this switch */
     mul_app_send_flow_del(L2SW_APP_NAME, NULL, dpid, &fl,
-                          OFPFW_ALL, OFPP_NONE, C_FL_ENT_NOCACHE);
+                          OFPFW_ALL, OFPP_NONE, 0, C_FL_ENT_NOCACHE);
 
     /* Zero DST MAC Drop */
     mul_app_send_flow_add(L2SW_APP_NAME, NULL, dpid, &fl, L2SW_UNK_BUFFER_ID,
@@ -310,7 +310,7 @@ l2sw_mod_flow(void *arg, l2sw_t *l2sw, l2fdb_ent_t *fdb,
                               wildcards, C_FL_PRIO_DFL, C_FL_ENT_NOCACHE);
     } else {
         mul_app_send_flow_del(L2SW_APP_NAME, arg, l2sw->swid, &fl,
-                              wildcards, OFPP_NONE, C_FL_ENT_NOCACHE);
+                              wildcards, OFPP_NONE, C_FL_PRIO_DFL, C_FL_ENT_NOCACHE);
     }
 
     return 0;

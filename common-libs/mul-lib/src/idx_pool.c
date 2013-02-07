@@ -24,18 +24,27 @@
 #include <stdint.h>
 #include <limits.h>
 
+#include "lock.h"
 #include "idx_pool.h"
 
 int
-ipool_get(ipool_hdl_t *pool)
+ipool_get(ipool_hdl_t *pool, void *priv)
 {
-    int next_idx = pool->next_idx;
+    int next_idx;
+
+    c_wr_lock(&pool->lock);
+
+    next_idx = pool->next_idx;
 
     if (next_idx == -1) {
+        c_wr_unlock(&pool->lock);
         return -1;
     }
 
-    pool->next_idx = pool->idx_arr[pool->next_idx];
+    pool->next_idx = pool->idx_arr[next_idx].next_idx;
+    pool->idx_arr[next_idx].priv = priv;
+
+    c_wr_unlock(&pool->lock);
 
     return next_idx;
 }
@@ -44,12 +53,18 @@ int
 ipool_put(ipool_hdl_t *pool, int ret_idx)
 {
 
+    c_wr_lock(&pool->lock);
+
     if (ret_idx < 0 || ret_idx > pool->max_idx) {
+        c_wr_unlock(&pool->lock);
         return -1;
     }
 
-    pool->idx_arr[ret_idx] = pool->next_idx;
+    pool->idx_arr[ret_idx].next_idx = pool->next_idx;
+    pool->idx_arr[ret_idx].priv = NULL;
     pool->next_idx = ret_idx;
+
+    c_wr_unlock(&pool->lock);
     
     return 0;
 }
@@ -69,20 +84,22 @@ ipool_create(size_t sz, uint32_t start_idx)
         return NULL;
     }
 
-    pool->idx_arr = calloc(1, sz);
+    pool->idx_arr = calloc(1, sz * sizeof(ipool_arr_t));
     if (pool->idx_arr == NULL) {
         free(pool);
         return NULL;
     }
 
+    c_rw_lock_init(&pool->lock);
+
     pool->max_idx = start_idx + sz - 1; 
     pool->next_idx = start_idx;
 
     for (; idx < sz; idx++) {
-        pool->idx_arr[idx] = idx+1;
+        pool->idx_arr[idx].next_idx = idx+1;
     }
 
-    pool->idx_arr[idx-1] = -1;
+    pool->idx_arr[idx-1].next_idx = -1;
     
     return pool;
 }
@@ -99,4 +116,20 @@ ipool_delete(ipool_hdl_t *pool)
     }
 
     free(pool);
+}
+
+void *
+ipool_idx_priv(ipool_hdl_t *pool, int idx)
+{
+    /**
+     * Do we need locking here ? It is best to
+     * delegate locking responsilibty to the user
+     * or caller of idx pool
+     */
+
+    if (!pool || idx > pool->max_idx) {
+        return NULL;
+    }
+
+    return pool->idx_arr[idx].priv;
 }

@@ -103,7 +103,10 @@ enum node_type
   PROTOCOL_NODE,        /* protocol filtering node */
   KULVISOR_NODE,        /* Kulvisor node */ 
   SLICE_NODE,           /* Slice node */ 
-  FLOW_NODE,            /* Flow mode */
+  FLOW_NODE,            /* Flow node */
+  MUL_NODE,             /* MuL node */
+  MULTR_NODE,           /* MuL TR node */
+  MULFAB_NODE,          /* MuL Fab node */
   VTY_NODE,			    /* Vty node. */
 };
 
@@ -145,6 +148,7 @@ struct cmd_element
   char *config;			/* Configuration string */
   vector subconfig;		/* Sub configuration string */
   u_char attr;			/* Command attributes */
+  enum node_type ntype;  /* Node type command belongs to */
 };
 
 /* Command description structure. */
@@ -332,6 +336,9 @@ struct desc
 extern void install_node (struct cmd_node *, int (*) (struct vty *));
 extern void install_default (enum node_type);
 extern void install_element (enum node_type, struct cmd_element *);
+extern void install_element_attr_type (enum node_type ntype,
+                                       struct cmd_element *cmd,
+                                       enum node_type attr_type);
 extern void sort_node (void);
 
 /* Concatenates argv[shift] through argv[argc-1] into a single NUL-terminated

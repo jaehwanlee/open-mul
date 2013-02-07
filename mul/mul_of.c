@@ -22,6 +22,7 @@
 static void of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, uint32_t buffer_id);
 static void of_send_flow_del(c_switch_t *sw, c_fl_entry_t *ent,
                              uint16_t oport, bool strict);
+static void of_send_flow_del_strict(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport);
 static c_fl_entry_t *__of_flow_get_exm(c_switch_t *sw, struct flow *fl);
 static void of_flow_rule_free(void *arg, void *u_arg);
 
@@ -99,116 +100,6 @@ of_dump_flow_all(struct flow *fl)
 }
 
 char *
-of_dump_flow(struct flow *fl, uint32_t wildcards)   
-{   
-    char     *pbuf = calloc(1, FL_PBUF_SZ);
-    int      len = 0;
-    uint32_t nw_dst_mask, nw_src_mask;
-    uint32_t ip_wc;
-
-    wildcards = ntohl(wildcards);
-    ip_wc = ((wildcards & OFPFW_NW_DST_MASK) >> OFPFW_NW_DST_SHIFT);
-    nw_dst_mask = ip_wc >= 32 ? 0 :
-                           make_inet_mask(32-ip_wc);
-
-    ip_wc = ((wildcards & OFPFW_NW_SRC_MASK) >> OFPFW_NW_SRC_SHIFT);
-    nw_src_mask = ip_wc >= 32 ? 0 :
-                           make_inet_mask(32-ip_wc);
-
-    len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, "Flow: ");
-    assert(len < FL_PBUF_SZ-1);
-
-    if (wildcards == OFPFW_ALL) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, "All Fields Wildcards");
-        assert(len < FL_PBUF_SZ-1);
-        return pbuf;
-    }
-
-    if (!(wildcards & OFPFW_DL_SRC)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                   "%s:%02x:%02x:%02x:%02x:%02x:%02x ", 
-                   "smac", fl->dl_src[0], fl->dl_src[1], fl->dl_src[2],
-                   fl->dl_src[3], fl->dl_src[4], fl->dl_src[5]);
-        assert(len < FL_PBUF_SZ-1);
-    }
-    if (!(wildcards & OFPFW_DL_DST)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                   "%s:%02x:%02x:%02x:%02x:%02x:%02x ",
-                   "dmac", fl->dl_dst[0], fl->dl_dst[1], fl->dl_dst[2],
-                   fl->dl_dst[3], fl->dl_dst[4], fl->dl_dst[5]);
-        assert(len < FL_PBUF_SZ-1);
-    }
-
-    if (!(wildcards & OFPFW_DL_TYPE)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ",
-                     "eth-type", ntohs(fl->dl_type)); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-    if (!(wildcards & OFPFW_DL_VLAN)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ",
-                     "vlan-id",  ntohs(fl->dl_vlan)); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-
-    if (!(wildcards & OFPFW_DL_VLAN_PCP)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ",
-                     "vlan-pcp", ntohs(fl->dl_vlan_pcp));
-        assert(len < FL_PBUF_SZ-1);
-
-    }
-    if (nw_dst_mask) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%08x ",
-                     "dest-ip", ntohl(fl->nw_dst) & nw_dst_mask); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-    if (nw_src_mask) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%08x ",
-                     "src-ip", ntohl(fl->nw_src) & nw_src_mask); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-    if (!(wildcards & OFPFW_NW_PROTO)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ",
-                     "ip-proto", fl->nw_proto); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-    if (!(wildcards & OFPFW_NW_TOS)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ",
-                     "ip-tos", fl->nw_tos);  
-        assert(len < FL_PBUF_SZ-1);
-    }
-
-    if (!(wildcards & OFPFW_TP_SRC)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ", 
-                    "src-port", ntohs(fl->tp_src)); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-
-    if (!(wildcards & OFPFW_TP_DST)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ", 
-                    "dst-port", ntohs(fl->tp_dst)); 
-        assert(len < FL_PBUF_SZ-1);
-    }
-
-    if (!(wildcards & OFPFW_IN_PORT)) {
-        len += snprintf(pbuf+len, FL_PBUF_SZ-len-1, 
-                    "%s:0x%x ", 
-                    "in-port", ntohs(fl->in_port));
-        assert(len < FL_PBUF_SZ-1);
-    }
-
-    return pbuf;
-}
-
-char *
 of_dump_fl_app(c_fl_entry_t *ent)  
 {
     c_app_info_t *app;
@@ -265,6 +156,10 @@ of_switch_add(c_switch_t *sw)
     }
 
     g_hash_table_add(ctrl->sw_hash_tbl, sw);
+    if ((sw->alias_id = ipool_get(ctrl->sw_ipool, sw)) < 0) {
+        /* Throw a log and continue as we still can continue */
+        c_log_err("%s: Cant get alias for switch 0x%llx\n", FN, sw->DPID);
+    }
 
     c_wr_unlock(&ctrl->lock);
 
@@ -279,6 +174,10 @@ of_switch_del(c_switch_t *sw)
     c_wr_lock(&ctrl->lock);
     if (ctrl->sw_hash_tbl) {
        g_hash_table_remove(ctrl->sw_hash_tbl, sw);
+    }
+
+    if (ctrl->sw_ipool) {
+        ipool_put(ctrl->sw_ipool, sw->alias_id);
     }
     c_wr_unlock(&ctrl->lock);
 
@@ -330,6 +229,22 @@ of_switch_get(ctrl_hdl_t *ctrl, uint64_t dpid)
     return sw;
 }
 
+c_switch_t *
+of_switch_alias_get(ctrl_hdl_t *ctrl, int alias)
+{
+    c_switch_t       *sw; 
+
+    c_rd_lock(&ctrl->lock);
+
+    sw = ipool_idx_priv(ctrl->sw_ipool, alias);
+    if (sw) {
+        atomic_inc(&sw->ref, 1);
+    }
+
+    c_rd_unlock(&ctrl->lock);
+
+    return sw;
+}
 
 c_switch_t *
 __of_switch_get(ctrl_hdl_t *ctrl, uint64_t dpid)
@@ -370,6 +285,53 @@ of_switch_put(c_switch_t *sw)
         atomic_dec(&sw->ref, 1);
     }
 }
+
+void
+of_switch_detail_info(c_switch_t *sw,
+                      struct ofp_switch_features *osf)
+{
+    struct ofp_phy_port *port_msg, *port;
+    int n = 0;
+
+    osf->datapath_id = htonll(sw->DPID);
+    osf->n_buffers = htonl(sw->n_buffers);
+    osf->n_tables = sw->n_tables;
+    osf->capabilities = htonl(sw->capabilities);
+    osf->actions = htonl(sw->actions);
+
+    port_msg = osf->ports;
+
+    for (; n < OFSW_MAX_PORTS; n++) {
+        if (!sw->ports[n].valid) continue;
+
+        port = &sw->ports[n].p_info;
+
+        port_msg->port_no = htons(n);
+        port_msg->config = htonl(port->config);
+        port_msg->state = htonl(port->state);
+        port_msg->curr = htonl(port->curr);
+        port_msg->advertised = htonl(port->advertised);
+        port_msg->supported = htonl(port->supported);
+        port_msg->peer = htonl(port->peer);
+
+        memcpy(port_msg->name, port->name, OFP_MAX_PORT_NAME_LEN);
+        memcpy(port_msg->hw_addr, port->hw_addr, OFP_ETH_ALEN);
+
+        port_msg++;
+    }
+}
+
+void
+of_switch_brief_info(c_switch_t *sw,
+                     struct c_ofp_switch_brief *cofp_sb) 
+{
+    cofp_sb->switch_id.datapath_id = htonll(sw->DPID);
+    cofp_sb->n_ports = ntohl(sw->n_ports);
+    cofp_sb->state = ntohl(sw->switch_state); 
+    strncpy(cofp_sb->conn_str, sw->conn.conn_str, OFP_CONN_DESC_SZ);
+    cofp_sb->conn_str[OFP_CONN_DESC_SZ-1] = '\0';
+}
+
 
 void
 of_switch_traverse_all(ctrl_hdl_t *hdl, GHFunc iter_fn, void *arg)
@@ -473,7 +435,7 @@ of_flow_add_app_ownership(c_fl_entry_t *ent, void *new_app)
     return 0;
 }
 
-static int
+int
 __of_flow_find_app_ownership(void *key_arg UNUSED, void *ent_arg, void *app)
 {
     GSList       *iterator = NULL;
@@ -807,7 +769,8 @@ __of_flow_lookup_rule_strict_prio_hint(GSList **list, struct flow *fl, uint32_t 
             hint = iterator;
         } 
         if (!memcmp(&ent->fl, fl, sizeof(*fl)) 
-            && ent->FL_WILDCARDS == wildcards) {
+            && ent->FL_WILDCARDS == wildcards &&
+            ent->FL_PRIO == prio) {
             *list = hint;
             return ent;
         }
@@ -1076,6 +1039,7 @@ of_flow_rule_del(c_switch_t *sw, struct of_flow_mod_params *fl_parms)
     if (!__of_flow_rule_del_strict(&tbl->rule_fl_tbl, &flow, 
                                    fl_parms->wildcards, fl_parms->prio, 
                                    fl_parms->app_owner)) {
+        c_log_err("%s: Flow not present", FN);
         c_wr_unlock(&sw->lock);
         return -1;
     }
@@ -1087,7 +1051,7 @@ of_flow_rule_del(c_switch_t *sw, struct of_flow_mod_params *fl_parms)
     ent = container_of(flow, c_fl_entry_t, fl);
 
     if (!(ent->FL_FLAGS & C_FL_ENT_LOCAL)) {
-        of_send_flow_del(sw, ent, 0, false);
+        of_send_flow_del_strict(sw, ent, 0);
     }
 
     if (!atomic_read(&ent->app_ref)) {
@@ -1177,7 +1141,7 @@ of_flow_traverse_tbl_all(c_switch_t *sw, void *u_arg, flow_parser_fn fn)
     }
  
 }
-             
+
 static void
 of_switch_flow_tbl_create(c_switch_t *sw)
 {
@@ -1218,12 +1182,38 @@ of_switch_flow_tbl_delete(c_switch_t *sw)
         if (tbl->rule_fl_tbl) {
             g_slist_foreach(tbl->rule_fl_tbl, (GFunc)of_flow_rule_free, sw);
             g_slist_free(tbl->rule_fl_tbl);
+            tbl->rule_fl_tbl = NULL;
         }
     }
 
     tbl = &sw->exm_flow_tbl;
     if (tbl->exm_fl_hash_tbl) {
         g_hash_table_destroy(tbl->exm_fl_hash_tbl);
+    }
+
+    c_wr_unlock(&sw->lock);
+}
+
+void
+of_switch_flow_tbl_reset(c_switch_t *sw)
+{
+    int           tbl_idx = 0;
+    c_flow_tbl_t  *tbl;
+
+    c_wr_lock(&sw->lock);
+
+    for (; tbl_idx < C_MAX_RULE_FLOW_TBLS; tbl_idx++) {
+        tbl = &sw->rule_flow_tbls[tbl_idx];
+        if (tbl->rule_fl_tbl) {
+            g_slist_foreach(tbl->rule_fl_tbl, (GFunc)of_flow_rule_free, sw);
+            g_slist_free(tbl->rule_fl_tbl);
+            tbl->rule_fl_tbl = NULL;
+        }
+    }
+
+    tbl = &sw->exm_flow_tbl;
+    if (tbl->exm_fl_hash_tbl) {
+        g_hash_table_remove_all(tbl->exm_fl_hash_tbl);
     }
 
     c_wr_unlock(&sw->lock);
@@ -1361,6 +1351,18 @@ of_send_flow_del(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport, bool strict)
     c_thread_tx(&sw->conn, b, true);
 }
 
+static void
+of_send_flow_del_strict(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport)
+{
+    struct cbuf *b = of_prep_flow_del_msg(&ent->fl, ent->FL_WILDCARDS, oport,
+                                          true); 
+    struct ofp_flow_mod *ofm = (void *)(b->data);
+
+    /* Kludge which I hate */
+    ofm->priority = htons(ent->FL_PRIO);
+    c_thread_tx(&sw->conn, b, true);
+}
+
 static void UNUSED
 __of_send_flow_del(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport, bool strict)
 {
@@ -1384,6 +1386,26 @@ __of_send_flow_del_nocache(c_switch_t *sw, struct flow *fl, uint32_t wildcards,
                          uint16_t oport, bool strict)
 {
     of_send_flow_del_nocache(sw, fl, wildcards, oport, strict);
+    c_thread_sg_tx_sync(&sw->conn);
+    return 0;
+}
+
+int
+of_send_flow_stat_req(c_switch_t *sw, const struct flow *flow, 
+                      uint32_t wildcards, uint8_t tbl_id, uint16_t oport)
+{
+    struct cbuf *b = of_prep_flow_stat_msg(flow, wildcards, tbl_id, oport); 
+    
+    c_thread_tx(&sw->conn, b, true);
+    return 0;
+}
+
+int
+__of_send_flow_stat_req(c_switch_t *sw, const struct flow *flow, 
+                        uint32_t wildcards, uint8_t tbl_id, uint16_t oport)
+{
+    of_send_flow_stat_req(sw, flow, wildcards, tbl_id, oport);
+
     c_thread_sg_tx_sync(&sw->conn);
     return 0;
 }
@@ -1413,10 +1435,14 @@ of_process_phy_port(c_switch_t *sw, void *opp_, uint8_t reason,
             return;
         }
 
+        sw->n_ports--;
         memset (&sw->ports[port_no], 0, sizeof(struct ofp_phy_port));
         return;
     case OFPPR_ADD:
     case OFPPR_MODIFY:
+        if (!(sw->ports[port_no].valid & OFC_SW_PORT_VALID)) { 
+            sw->n_ports++;
+        }
         break;
     default:
         c_log_err("%s: Unknown port(%u) change reason(%u)", FN, port_no, reason);
@@ -1452,7 +1478,9 @@ of_recv_port_status(c_switch_t *sw, struct cbuf *b)
     struct c_port_cfg_state_mask chg_mask = { 0, 0 };
     struct ofp_port_status *ops = (void *)(b->data);
 
+    c_wr_lock(&sw->lock);
     of_process_phy_port(sw, &ops->desc, ops->reason, &chg_mask);
+    c_wr_unlock(&sw->lock);
 
     c_signal_app_event(sw, b, C_PORT_CHANGE, NULL, &chg_mask);
 }
@@ -1828,48 +1856,181 @@ of_flow_removed(c_switch_t *sw, struct cbuf *b)
     flow.tp_src = ofm->match.tp_src;
     flow.tp_dst = ofm->match.tp_dst;
 
-    fl_parms.flow = &flow;    
+    fl_parms.flow = &flow;
     fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
     
+    /*
+     * It is upto the application to check what flows are removed
+     * by the switch and inform the controller so the controller 
+     * itself does not take any action 
+     */
     c_signal_app_event(sw, b, C_FLOW_REMOVED, NULL, &fl_parms);
 }
 
 static void
+of_recv_flow_mod_failed(c_switch_t *sw, struct cbuf *b)
+{
+    struct flow                 flow;
+    struct ofp_error_msg        *ofp_err = (void *)(b->data);
+    struct ofp_flow_mod         *ofm = (void *)(ofp_err->data);
+    struct of_flow_mod_params   fl_parms;
+    void                        *app;
+    char                        *print_str;
+
+    memset(&flow, 0, sizeof(flow));
+    flow.in_port = ofm->match.in_port;
+    memcpy(flow.dl_src, ofm->match.dl_src, sizeof ofm->match.dl_src);
+    memcpy(flow.dl_dst, ofm->match.dl_dst, sizeof ofm->match.dl_dst);
+    flow.dl_vlan = ofm->match.dl_vlan;
+    flow.dl_type = ofm->match.dl_type;
+    flow.dl_vlan_pcp = ofm->match.dl_vlan_pcp;
+    flow.nw_src = ofm->match.nw_src;
+    flow.nw_dst = ofm->match.nw_dst;
+    flow.nw_proto = ofm->match.nw_proto;
+    flow.tp_src = ofm->match.tp_src;
+    flow.tp_dst = ofm->match.tp_dst;
+
+    fl_parms.wildcards = ofm->match.wildcards;
+    fl_parms.flow = &flow;
+    fl_parms.prio = ntohs(ofm->priority);
+    fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
+
+    /* Controller owns only vty intalled static flows */
+    if (!(app = c_app_get(sw->c_hdl, C_VTY_NAME))) {
+        goto app_signal_out;
+    }
+
+    fl_parms.app_owner = app;
+    of_flow_del(sw, &fl_parms);
+    c_app_put(app);
+    fl_parms.app_owner = NULL;
+
+app_signal_out:
+    /* We take a very conservative approach here and multicast
+     * flow mod failed to all apps irrespective of they are owners
+     * of this flow or not to maintain sanity because some apps
+     * may implicitly use this flow for some operation
+     */
+    c_signal_app_event(sw, b, C_FLOW_MOD_FAILED, NULL, &fl_parms);
+
+    print_str= of_dump_flow(&flow, fl_parms.wildcards);
+    c_log_err("%s: flow-mod failed for flow:", FN);
+    c_log_err("%s", print_str);
+    free(print_str);
+
+    return;
+} 
+
+static void
 of_recv_err_msg(c_switch_t *sw, struct cbuf *b)
 {
-    struct ofp_error_msg    *ofp_err = (void *)(b->data);
+    struct ofp_error_msg *ofp_err = (void *)(b->data);
 
     c_log_err("%s: switch 0x%llx sent error type %hu code %hu", FN, 
                sw->DPID, ntohs(ofp_err->type), ntohs(ofp_err->code));
 
     switch(ntohs(ofp_err->type)) {
     case OFPET_FLOW_MOD_FAILED:
-        {
-            struct flow flow;
-            char *print_str;
-            struct ofp_flow_mod *ofm = (void *)(ofp_err->data);
-            uint32_t wildcards = ofm->match.wildcards;
-
-            flow.in_port = ofm->match.in_port;
-            memcpy(flow.dl_src, ofm->match.dl_src, sizeof ofm->match.dl_src);
-            memcpy(flow.dl_dst, ofm->match.dl_dst, sizeof ofm->match.dl_dst);
-            flow.dl_vlan = ofm->match.dl_vlan;
-            flow.dl_type = ofm->match.dl_type;
-            flow.dl_vlan_pcp = ofm->match.dl_vlan_pcp;
-            flow.nw_src = ofm->match.nw_src;
-            flow.nw_dst = ofm->match.nw_dst;
-            flow.nw_proto = ofm->match.nw_proto;
-            flow.tp_src = ofm->match.tp_src;
-            flow.tp_dst = ofm->match.tp_dst;
-
-            print_str= of_dump_flow(&flow, wildcards);
-            c_log_debug("%s", print_str);
-            free(print_str);
-            break;
-        }
+        return of_recv_flow_mod_failed(sw, b);
     default:
         break;
     }
+}
+
+static void
+of_flow_stats_update(c_switch_t *sw, struct ofp_flow_stats *ofp_stats)
+{
+    c_fl_entry_t    *ent;
+    struct flow     flow;
+    uint64_t        curr_time;
+    long double     time_diff;        
+
+    memset(&flow, 0, sizeof(flow));
+
+    flow.in_port = ofp_stats->match.in_port;
+    memcpy(flow.dl_src, ofp_stats->match.dl_src, sizeof ofp_stats->match.dl_src);
+    memcpy(flow.dl_dst, ofp_stats->match.dl_dst, sizeof ofp_stats->match.dl_dst);
+    flow.dl_vlan = ofp_stats->match.dl_vlan;
+    flow.dl_type = ofp_stats->match.dl_type;
+    flow.dl_vlan_pcp = ofp_stats->match.dl_vlan_pcp;
+    flow.nw_src = ofp_stats->match.nw_src;
+    flow.nw_dst = ofp_stats->match.nw_dst;
+    flow.nw_proto = ofp_stats->match.nw_proto;
+    flow.tp_src = ofp_stats->match.tp_src;
+    flow.tp_dst = ofp_stats->match.tp_dst;
+
+
+    /* FIXME : Take prio into account for lookup */
+    ent = of_do_flow_lookup(sw, &flow);
+
+    if (!ent) {
+        c_log_err("%s: Unknown flow in stats reply", FN);
+        return;
+    }
+
+    curr_time = g_get_monotonic_time();
+    time_diff =  (long double)((curr_time - ent->fl_stats.last_refresh))/TIME_uS_SCALE; 
+
+    if (ent->fl_stats.last_refresh && time_diff) {
+        ent->fl_stats.bps = (long double)(ntohll(ofp_stats->byte_count) 
+                                          - ent->fl_stats.byte_count)/time_diff; 
+        ent->fl_stats.pps = (long double)(ntohll(ofp_stats->packet_count) 
+                                          - ent->fl_stats.pkt_count)/time_diff; 
+    }
+
+    ent->fl_stats.byte_count = ntohll(ofp_stats->byte_count);
+    ent->fl_stats.pkt_count = ntohll(ofp_stats->packet_count);
+    ent->fl_stats.last_refresh = curr_time;    
+
+    of_flow_entry_put(ent);
+
+    return;
+}
+
+static void
+of_per_flow_stats_scan(void *time_arg, c_fl_entry_t *ent)
+{
+    uint64_t time = *(uint64_t *)time_arg;
+
+    if ((ent->FL_ENT_TYPE != C_TBL_EXM &&
+        ent->FL_FLAGS & C_FL_ENT_CLONE) || 
+        ent->FL_FLAGS & C_FL_ENT_LOCAL) {
+        return;
+    }
+
+    if (ent->FL_FLAGS & C_FL_ENT_GSTATS) 
+        if (!ent->fl_stats.last_refresh || 
+            ((time - ent->fl_stats.last_refresh) > TIME_uS(5))) {
+            __of_send_flow_stat_req(ent->sw, &ent->fl, ent->FL_WILDCARDS, 
+                                    OF_ALL_TABLES, 0);   
+        }
+}
+
+void
+of_per_switch_flow_stats_scan(c_switch_t *sw, uint64_t curr_time)
+{
+    of_flow_traverse_tbl_all(sw, (void *)&curr_time, of_per_flow_stats_scan);    
+}
+ 
+
+static void
+of_recv_stats_reply(c_switch_t *sw, struct cbuf *b)
+{
+    struct ofp_stats_reply *ofp_sr = (void *)(b->data);
+
+
+    switch(ntohs(ofp_sr->type)) {
+    case OFPST_FLOW:
+        {
+            of_flow_stats_update(sw, (void *)(ofp_sr + 1));    
+            break;
+        }
+    default:
+        c_log_err("%s: Unhandled stats reply 0x%x", FN, ntohs(ofp_sr->type));
+        break;
+    }
+
+    return;
 }
 
 struct of_handler of_handlers[] __aligned = {
@@ -1890,7 +2051,7 @@ struct of_handler of_handlers[] __aligned = {
     NULL_OF_HANDLER,                                            /* OFPT_FLOW_MOD */
     NULL_OF_HANDLER,                                            /* OFPT_PORT_MOD */
     NULL_OF_HANDLER,                                            /* OFPT_STATS_REQUEST */
-    NULL_OF_HANDLER,                                            /* OFPT_STATS_REPLY */
+    { of_recv_stats_reply, sizeof(struct ofp_stats_reply) },    /* OFPT_STATS_REPLY */
     NULL_OF_HANDLER,                                            /* OFPT_BARRIER_REQUEST */
     NULL_OF_HANDLER,                                            /* OFPT_BARRIER_REPLY */
 };
@@ -1925,6 +2086,9 @@ of_ctrl_init(ctrl_hdl_t *c_hdl, size_t nthreads, size_t n_appthreads)
 {
     memset (c_hdl, 0, sizeof(ctrl_hdl_t));
     c_rw_lock_init(&c_hdl->lock);
+
+    c_hdl->sw_ipool = ipool_create(MAX_SWITCHES_PER_CLUSTER, 0);
+    assert(c_hdl->sw_ipool);
 
     c_hdl->worker_ctx_list = (struct c_cmn_ctx **)malloc(nthreads * sizeof(void *));
     assert(c_hdl->worker_ctx_list);

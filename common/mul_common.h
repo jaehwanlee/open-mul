@@ -29,6 +29,7 @@
 #include <assert.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -36,8 +37,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include "compiler.h"
 #include "cbuf.h"
 #include "lock.h"
+#include "idx_pool.h"
 #include "atomic.h"
 #include "xtoxll.h"
 #include "hash.h"
@@ -50,5 +53,6 @@
 #include "mul_app_interface.h"
 #include "mul_of_msg.h"
 #include "mul_packet.h"
+#include "mul_services.h"
 
 #endif

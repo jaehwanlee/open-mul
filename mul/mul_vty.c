@@ -19,8 +19,6 @@
 #include "mul.h"
 #include "mul_vty.h"
 
-#define MUL_VTY_NAME "mul-vty"
-
 int c_vty_thread_run(void *arg);
 
 char              *vty_addr = NULL;
@@ -260,6 +258,7 @@ struct vty_flow_action_parms
     uint8_t action_len;
     void *actions;
     uint32_t wildcards;
+    bool drop_pkt;
 };
 
 static void
@@ -282,6 +281,16 @@ vty_of_print_flow(void *arg, c_fl_entry_t *ent)
             ent->FL_FLAGS & C_FL_ENT_STATIC ? "static":"dynamic",
             ent->FL_FLAGS & C_FL_ENT_CLONE ? "clone": "no-clone",
             ent->FL_FLAGS & C_FL_ENT_LOCAL ? "local": "non-local");
+
+    if (!(ent->FL_FLAGS & C_FL_ENT_CLONE) && (ent->FL_FLAGS & C_FL_ENT_GSTATS) 
+        && !(ent->FL_FLAGS & C_FL_ENT_LOCAL)) {
+        vty_out(vty, "%s: Bytes %llu Packets %llu\r\n", "Stats",
+                (unsigned long long)ent->fl_stats.byte_count, 
+                (unsigned long long)ent->fl_stats.pkt_count);
+
+        vty_out(vty, "%s  Bps %f Pps %f\r\n", "     ", 
+                (float)ent->fl_stats.bps,  (float)ent->fl_stats.pps);
+    }
 
     flow_app_str = of_dump_fl_app(ent);
     vty_out(vty, "%s\r\n", flow_app_str);
@@ -325,8 +334,6 @@ DEFUN (show_of_switch_flow,
     return CMD_SUCCESS;
 }
 
-
-
 DEFUN (of_add_output_action,
        of_add_output_action_cmd,
        "action-add output <0-65535>",
@@ -362,6 +369,41 @@ DEFUN (of_add_set_vid_action,
 
     return CMD_SUCCESS;
 }
+
+DEFUN (of_add_strip_vlan_action,
+       of_add_strip_vlan_action_cmd,
+       "action-add strip-vlan",
+       "Add openflow action\n"
+       "Strip vlan action\n")
+{
+    struct vty_flow_action_parms *args = vty->index;
+    uint8_t                      *act_wr_ptr;
+
+    act_wr_ptr = (uint8_t *)args->actions + args->action_len;
+    args->action_len += of_make_action_strip_vlan((char **)&act_wr_ptr,
+                                               OF_MAX_ACTION_LEN - args->action_len);
+
+    return CMD_SUCCESS;
+}
+
+DEFUN (of_add_set_vpcp_action,
+       of_add_set_vpcp_action_cmd,
+       "action-add vlan-pcp <0-7>",
+       "Add openflow action\n"
+       "set vlan-pcp action\n"
+       "Enter vlan-pcp\n")
+{
+    struct vty_flow_action_parms *args = vty->index;
+    uint8_t                      *act_wr_ptr;
+
+    act_wr_ptr = (uint8_t *)args->actions + args->action_len;
+    args->action_len += of_make_action_set_vlan_pcp((char **)&act_wr_ptr,
+                                               OF_MAX_ACTION_LEN - args->action_len,
+                                               strtoull(argv[0], NULL, 10));
+
+    return CMD_SUCCESS;
+}
+
 
 DEFUN (of_add_set_dmac_action,
        of_add_set_dmac_action_cmd,
@@ -399,6 +441,103 @@ DEFUN (of_add_set_dmac_action,
     return CMD_SUCCESS;
 }
 
+DEFUN (of_add_set_smac_action,
+       of_add_set_smac_action_cmd,
+       "action-add set-smac X",
+       "Add openflow action\n"
+       "set smac action\n"
+       "Enter MAC address (xx:xx:xx:xx:xx:xx) \n")
+{
+    struct vty_flow_action_parms *args = vty->index;
+    uint8_t                      *act_wr_ptr;
+    uint8_t                      smac[6];
+    char                         *mac_str, *next = NULL;
+    int                          i = 0;
+
+
+    mac_str = (void *)argv[0];
+    for (i = 0; i < 6; i++) {
+        smac[i] = (uint8_t)strtoul(mac_str, &next, 16);
+        if(mac_str == next)
+            break;
+        mac_str = next + 1;
+    }
+
+    if (i != 6) {
+        vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
+        return CMD_WARNING;
+    }
+
+
+    act_wr_ptr = (uint8_t *)args->actions + args->action_len;
+    args->action_len += of_make_action_set_smac((char **)&act_wr_ptr,
+                                                OF_MAX_ACTION_LEN - args->action_len,
+                                                smac);
+
+    return CMD_SUCCESS;
+}
+
+DEFUN (of_add_set_nw_saddr_action,
+       of_add_set_nw_saddr_action_cmd,
+       "action-add nw-saddr A.B.C.D",
+       "Add openflow action\n"
+       "set source ip address action\n"
+       "Enter ip address\n")
+{
+    struct vty_flow_action_parms *args = vty->index;
+    uint8_t                      *act_wr_ptr;
+    struct in_addr               ip_addr;
+
+    if (inet_aton(argv[0], &ip_addr) <= 0) {
+        vty_out(vty, "Malformed ip address%s", VTY_NEWLINE);
+        return CMD_WARNING;
+    }
+    act_wr_ptr = (uint8_t *)args->actions + args->action_len;
+    args->action_len += of_make_action_set_nw_saddr((char **)&act_wr_ptr,
+                                               OF_MAX_ACTION_LEN - args->action_len,
+                                               ntohl(ip_addr.s_addr));
+
+    return CMD_SUCCESS;
+}
+
+DEFUN (of_add_set_nw_daddr_action,
+       of_add_set_nw_daddr_action_cmd,
+       "action-add nw-daddr A.B.C.D",
+       "Add openflow action\n"
+       "set destination ip address action\n"
+       "Enter ip address\n")
+{
+    struct vty_flow_action_parms *args = vty->index;
+    uint8_t                      *act_wr_ptr; 
+    struct in_addr               ip_addr;
+
+    if (inet_aton(argv[0], &ip_addr) <= 0) {
+        vty_out(vty, "Malformed ip address%s", VTY_NEWLINE);
+        return CMD_WARNING;
+    }
+    act_wr_ptr = (uint8_t *)args->actions + args->action_len;
+    args->action_len += of_make_action_set_nw_daddr((char **)&act_wr_ptr,
+                                               OF_MAX_ACTION_LEN - args->action_len,
+                                               ntohl(ip_addr.s_addr));
+
+    return CMD_SUCCESS;
+}
+
+DEFUN (of_add_drop_action,
+       of_add_drop_action_cmd,
+       "action-add drop",
+       "Add openflow action\n"
+       "drop packet action\n")
+{
+    struct vty_flow_action_parms *args = vty->index;
+
+
+    args->drop_pkt = true;
+
+    return CMD_SUCCESS;
+}
+
+
 
 DEFUN (flow_actions,
        flow_actions_cmd,
@@ -424,22 +563,28 @@ DEFUN (flow_actions_commit,
 
     if (args) {
         sw = args->sw;
-        if (args->action_len >= 4 && args->sw) {
+        if ((args->action_len >= 4 || args->drop_pkt)&& args->sw) {
 
-            app = c_app_get(&ctrl_hdl, MUL_VTY_NAME);
+            app = c_app_get(&ctrl_hdl, C_VTY_NAME);
             if (app && sw->switch_state == SW_REGISTERED) {
                 
                 /* TODO action validation here */
                 memset(&fl_parms, 0, sizeof(fl_parms));
                 
                 fl_parms.flow = args->fl;
-                fl_parms.actions = args->actions;
-                fl_parms.action_len = args->action_len;
+                if (!args->drop_pkt) {
+                    fl_parms.actions = args->actions;
+                    fl_parms.action_len = args->action_len;
+                    fl_parms.prio = C_FL_PRIO_DFL;
+                } else {
+                    if (args->actions) free(args->actions);
+                    fl_parms.prio = C_FL_PRIO_DRP;
+                    vty_out(vty, "Ignoring all non-drop actions if any%s",
+                            VTY_NEWLINE);
+                }
                 fl_parms.wildcards = args->wildcards;
                 fl_parms.buffer_id = (uint32_t)(-1);
-                fl_parms.flags = fl_parms.wildcards ? 
-                                            (C_FL_ENT_CLONE | C_FL_ENT_STATIC)
-                                            : C_FL_ENT_STATIC;
+                fl_parms.flags = C_FL_ENT_GSTATS | C_FL_ENT_STATIC;
                 fl_parms.prio = C_FL_PRIO_DFL;
                 fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
                 fl_parms.app_owner = app;
@@ -531,19 +676,20 @@ DEFUN (of_flow_del_exm,
     dp_id = strtoull(argv[0], NULL, 16);
     sw = of_switch_get(&ctrl_hdl, dp_id);
     if (!sw) {
+        free(flow);
         return CMD_WARNING;
     }
 
     ret = inet_aton(argv[1], (struct in_addr *)&flow->nw_dst);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     ret = inet_aton(argv[2], (struct in_addr *)&flow->nw_src);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     flow->nw_proto = atoi(argv[3]);
@@ -561,7 +707,7 @@ DEFUN (of_flow_del_exm,
 
     if (i != 6) {
         vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     mac_str = (void *)argv[8];
@@ -574,7 +720,7 @@ DEFUN (of_flow_del_exm,
 
     if (i != 6) {
         vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     flow->dl_type = htons(atoi(argv[9]));
@@ -586,8 +732,8 @@ DEFUN (of_flow_del_exm,
     fl_parms.prio = C_FL_PRIO_DFL;
     fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
 
-    if (!(app = c_app_get(&ctrl_hdl, MUL_VTY_NAME))) {
-        goto deref_err_out;
+    if (!(app = c_app_get(&ctrl_hdl, C_VTY_NAME))) {
+        goto deref_free_err_out;
     }
 
     fl_parms.app_owner = app;
@@ -601,9 +747,12 @@ DEFUN (of_flow_del_exm,
     c_app_put(app);
     of_switch_put(sw);  
 
+    free(flow);
+
     return CMD_SUCCESS;
 
-deref_err_out:
+deref_free_err_out:
+    free(flow);
     of_switch_put(sw);  
     return CMD_WARNING;
 }
@@ -667,13 +816,15 @@ DEFUN_NOSH (of_flow_vty_add,
     dp_id = strtoull(argv[0], NULL, 16);
     sw = of_switch_get(&ctrl_hdl, dp_id);
     if (!sw) {
+        free(flow);
+        free(args);
         return CMD_WARNING;
     }
 
     ret = str2prefix(argv[1], (void *)&dst_p);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        goto deref_free_err_out;
     }
 
     if (dst_p.prefixlen) {
@@ -692,7 +843,7 @@ DEFUN_NOSH (of_flow_vty_add,
     ret = str2prefix(argv[2], (void *)&src_p);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        goto deref_free_err_out;
     }
 
     if (src_p.prefixlen) {
@@ -750,7 +901,7 @@ DEFUN_NOSH (of_flow_vty_add,
 
         if (i != 6) {
             vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-            goto deref_err_out;
+            goto deref_free_err_out;
         }
     }
 
@@ -769,7 +920,7 @@ DEFUN_NOSH (of_flow_vty_add,
 
         if (i != 6) {
             vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-            goto deref_err_out;  
+            goto deref_free_err_out;  
         }
     }
 
@@ -815,14 +966,16 @@ DEFUN_NOSH (of_flow_vty_add,
     vty->index = args;
 
     if ((ret = flow_actions_cmd.func(self, vty, argc, argv)) != CMD_SUCCESS) {
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     of_switch_put(sw);  
 
     return CMD_SUCCESS;
 
-deref_err_out:
+deref_free_err_out:
+    free(args);
+    free(flow);
     of_switch_put(sw);  
     return CMD_WARNING;
 }
@@ -883,13 +1036,14 @@ DEFUN (of_flow_vty_del,
     dp_id = strtoull(argv[0], NULL, 16);
     sw = of_switch_get(&ctrl_hdl, dp_id);
     if (!sw) {
+        free(flow);
         return CMD_WARNING;
     }
 
     ret = str2prefix(argv[1], (void *)&dst_p);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        goto deref_free_err_out;
     }
 
     if (dst_p.prefixlen) {
@@ -907,7 +1061,7 @@ DEFUN (of_flow_vty_del,
     ret = str2prefix(argv[2], (void *)&src_p);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        goto deref_free_err_out;
     }
 
     if (src_p.prefixlen) {
@@ -964,7 +1118,7 @@ DEFUN (of_flow_vty_del,
 
         if (i != 6) {
             vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-            goto deref_err_out;
+            goto deref_free_err_out;
         }
     }
 
@@ -983,7 +1137,7 @@ DEFUN (of_flow_vty_del,
 
         if (i != 6) {
             vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-            goto deref_err_out;  
+            goto deref_free_err_out;
         }
     }
 
@@ -1026,8 +1180,8 @@ DEFUN (of_flow_vty_del,
     fl_parms.prio = C_FL_PRIO_DFL;
     fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
 
-    if (!(app = c_app_get(&ctrl_hdl, MUL_VTY_NAME))) {
-        goto deref_err_out;
+    if (!(app = c_app_get(&ctrl_hdl, C_VTY_NAME))) {
+        goto deref_free_err_out;  
     }
 
     fl_parms.app_owner = app;
@@ -1041,9 +1195,12 @@ DEFUN (of_flow_vty_del,
     c_app_put(app);
     of_switch_put(sw);  
 
+    free(flow);
+
     return CMD_SUCCESS;
 
-deref_err_out:
+deref_free_err_out:
+    free(flow);
     of_switch_put(sw);  
     return CMD_WARNING;
 }
@@ -1103,19 +1260,21 @@ DEFUN_NOSH (of_flow_add_exm,
     dp_id = strtoull(argv[0], NULL, 16);
     sw = of_switch_get(&ctrl_hdl, dp_id);
     if (!sw) {
+        free(flow);
+        free(args);
         return CMD_WARNING;
     }
 
     ret = inet_aton(argv[1], (struct in_addr *)&flow->nw_dst);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     ret = inet_aton(argv[2], (struct in_addr *)&flow->nw_src);
     if (ret <= 0) {
         vty_out (vty, "%% Malformed address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     flow->nw_proto = atoi(argv[3]);
@@ -1133,7 +1292,7 @@ DEFUN_NOSH (of_flow_add_exm,
 
     if (i != 6) {
         vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     mac_str = (void *)argv[8];
@@ -1146,7 +1305,7 @@ DEFUN_NOSH (of_flow_add_exm,
 
     if (i != 6) {
         vty_out (vty, "%% Malformed mac address%s", VTY_NEWLINE);
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     flow->dl_type = htons(atoi(argv[9]));
@@ -1160,18 +1319,52 @@ DEFUN_NOSH (of_flow_add_exm,
     vty->index = args;
 
     if ((ret = flow_actions_cmd.func(self, vty, argc, argv)) != CMD_SUCCESS) {
-        goto deref_err_out;  
+        goto deref_free_err_out;  
     }
 
     of_switch_put(sw);  
 
     return CMD_SUCCESS;
 
-deref_err_out:
+deref_free_err_out:
+    free(flow);
+    free(args);
     of_switch_put(sw);  
     return CMD_WARNING;
 }
 
+DEFUN (of_flow_reset,
+       of_flow_reset_cmd,
+       "of-flow reset-all switch X",
+       "Openflow flow\n"  
+       "reset-all flows\n"
+       "openflow-switch\n"
+       "datapath-id in 0xXXX format\n")
+{
+    uint64_t                     dp_id;
+    c_switch_t                   *sw;
+    struct flow                  flow;
+    struct of_flow_mod_params    fl_parms;
+
+    memset(&fl_parms, 0, sizeof(fl_parms));
+    memset(&flow, 0, sizeof(flow));
+
+    dp_id = strtoull(argv[0], NULL, 16);
+    sw = of_switch_get(&ctrl_hdl, dp_id);
+    if (!sw) {
+        return CMD_WARNING;
+    }
+
+    __of_send_flow_del_nocache(sw, &flow, htonl(OFPFW_ALL),
+                               OFPP_NONE, false); 
+
+    of_switch_flow_tbl_reset(sw);
+    of_switch_put(sw);
+
+    vty_out(vty, "All Flows reset\r\n");
+
+    return CMD_SUCCESS;
+}
 
 static void
 modvty__initcalls(void *arg)
@@ -1195,6 +1388,7 @@ mul_vty_init(void)
     install_element(CONFIG_NODE, &of_flow_del_exm_cmd);
     install_element(CONFIG_NODE, &of_flow_vty_add_cmd);
     install_element(CONFIG_NODE, &of_flow_vty_del_cmd);
+    install_element(CONFIG_NODE, &of_flow_reset_cmd);
     install_element(ENABLE_NODE, &show_of_switch_flow_cmd);
     install_default(FLOW_NODE);
     install_element(FLOW_NODE, &of_add_output_action_cmd);
@@ -1202,6 +1396,12 @@ mul_vty_init(void)
     install_element(FLOW_NODE, &of_add_set_dmac_action_cmd);
     install_element(FLOW_NODE, &flow_actions_exit_cmd);
     install_element(FLOW_NODE, &flow_actions_commit_cmd);
+    install_element(FLOW_NODE, &of_add_set_nw_saddr_action_cmd);
+    install_element(FLOW_NODE, &of_add_set_nw_daddr_action_cmd);
+    install_element(FLOW_NODE, &of_add_set_smac_action_cmd);
+    install_element(FLOW_NODE, &of_add_strip_vlan_action_cmd);
+    install_element(FLOW_NODE, &of_add_set_vpcp_action_cmd);
+    install_element(FLOW_NODE, &of_add_drop_action_cmd);
 
     modvty__initcalls(NULL);
 }
@@ -1219,7 +1419,7 @@ c_vty_thread_run(void *arg)
     signal(SIGPIPE, SIG_IGN);
 
     /* Register vty as an app for static flow install */
-    mul_register_app(NULL, MUL_VTY_NAME, 0, 0, 1, &dpid, NULL);
+    mul_register_app(NULL, C_VTY_NAME, 0, 0, 1, &dpid, NULL);
 
     c_hdl->vty_master = thread_master_create();
 
@@ -1228,7 +1428,7 @@ c_vty_thread_run(void *arg)
     mul_vty_init();
     sort_node();
 
-    vty_serv_sock(vty_addr, vty_port, C_VTYSH_PATH);
+    vty_serv_sock(vty_addr, vty_port, C_VTYSH_PATH, 1);
 
     c_log_debug(" VTY THREAD RUNNING \n");
 

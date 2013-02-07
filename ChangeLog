@@ -1,0 +1,42 @@
+-------------------------
+ mul 2.0 release notes 
+-------------------------
+
+Core infrastructure
+-   Availability of "services" exported to various apps.
+-   Support for RPC or shared memory constructs for inter-app communication 
+-   Support for auxillary connections by "core" mul to boost parallel processing
+-   Support for seqlock primitive for low contention locking
+-   datapath-id abstraction into a sequential-id space for applications
+-   Stringent flow and action validations before applying to hardware
+-   Support for almost all OF 1.0 actions 
+
+New applications
+-   Fabric app :
+    - Adds ability to form a data center fabric using a set of openflow 1.0 switches
+        - Weaves point to point multiple-l2 networks 
+        - Multi-tenant aware
+        - Dynamic insertion and deletion of default gateways per tenant virtual network
+        - Supports Openstack integration
+        - Zero manual provisioning
+        - Zero broadcast
+        - Proactive flow installation with no controller software forwarding or latency for supported switches
+        - Proxy ARP available for unsupported switches (which can't identify L3 fields in ARP packets)
+        - Fast rerouting response to port down events i.e can fall back to secondary routes in sub-second time-periods
+        - Support for online switch addition or deletion to fabric          
+        - Support for v-motion
+
+-   CLI app :
+    - Unified cli for controller provisioning and debugging
+        - Provides configurations backup mechanism in persistent storage
+        - Supports config replay based on per application events
+        - Extensions for future config HA 
+        - NBAPI integration
+
+New Services 
+-   Routing and Topology
+    - Shortest path computation using Floyd warshall algorithm
+    - Service exported via shared-memory constructs
+    - Scalable upto 512 switches. (This number is just a testing limit)
+    - Topology discovery using LLDP protocol
+    - Can identify fabric-ports from external ports

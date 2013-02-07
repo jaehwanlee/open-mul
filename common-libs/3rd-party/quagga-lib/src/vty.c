@@ -38,6 +38,7 @@
 #include "network.h"
 
 #include <arpa/telnet.h>
+#define C_NBAPI_PORT                7001
 
 /* Vty events */
 enum event 
@@ -51,6 +52,7 @@ enum event
   VTYSH_READ,
   VTYSH_WRITE
 #endif /* VTYSH */
+  NBAPI_SERV
 };
 
 static void vty_event (enum event, int, struct vty *);
@@ -1626,14 +1628,17 @@ vty_flush (struct thread *thread)
 
 /* Create new vty structure. */
 static struct vty *
-vty_create (int vty_sock, union sockunion *su)
+vty_create (int vty_sock, union sockunion *su, int is_vty)
 {
   struct vty *vty;
 
   /* Allocate new vty structure and set up default values. */
   vty = vty_new ();
   vty->fd = vty_sock;
-  vty->type = VTY_TERM;
+  if (is_vty) 
+    vty->type = VTY_TERM;
+  else
+    vty->type = VTY_NBAPI;
   vty->address = sockunion_su2str (su);
   if (no_password_check)
     {
@@ -1696,6 +1701,101 @@ vty_create (int vty_sock, union sockunion *su)
   vty_event (VTY_READ, vty_sock, vty);
 
   return vty;
+}
+
+/* Accept connection from the network. */
+static int
+nbapi_accept (struct thread *thread)
+{
+  int vty_sock;
+  struct vty *vty;
+  union sockunion su;
+  int ret;
+  unsigned int on;
+  int accept_sock;
+  struct prefix *p = NULL;
+  struct access_list *acl = NULL;
+  char *bufp;
+
+  accept_sock = THREAD_FD (thread);
+
+  /* We continue hearing vty socket. */
+  vty_event (NBAPI_SERV, accept_sock, NULL);
+
+  memset (&su, 0, sizeof (union sockunion));
+
+  /* We can handle IPv4 or IPv6 socket. */
+  vty_sock = sockunion_accept (accept_sock, &su);
+  if (vty_sock < 0)
+    {
+      zlog_warn ("can't accept vty socket : %s", safe_strerror (errno));
+      return -1;
+    }
+  set_nonblocking(vty_sock);
+
+  p = sockunion2hostprefix (&su);
+
+  /* VTY's accesslist apply. */
+  if (p->family == AF_INET && vty_accesslist_name)
+    {
+      if ((acl = access_list_lookup (AFI_IP, vty_accesslist_name)) &&
+	  (access_list_apply (acl, p) == FILTER_DENY))
+	{
+	  char *buf;
+	  zlog (NULL, LOG_INFO, "Vty connection refused from %s",
+		(buf = sockunion_su2str (&su)));
+	  free (buf);
+	  close (vty_sock);
+	  
+	  /* continue accepting connections */
+	  vty_event (NBAPI_SERV, accept_sock, NULL);
+	  
+	  prefix_free (p);
+
+	  return 0;
+	}
+    }
+
+#ifdef HAVE_IPV6
+  /* VTY's ipv6 accesslist apply. */
+  if (p->family == AF_INET6 && vty_ipv6_accesslist_name)
+    {
+      if ((acl = access_list_lookup (AFI_IP6, vty_ipv6_accesslist_name)) &&
+	  (access_list_apply (acl, p) == FILTER_DENY))
+	{
+	  char *buf;
+	  zlog (NULL, LOG_INFO, "Vty connection refused from %s",
+		(buf = sockunion_su2str (&su)));
+	  free (buf);
+	  close (vty_sock);
+	  
+	  /* continue accepting connections */
+	  vty_event (NBAPI_SERV, accept_sock, NULL);
+	  
+	  prefix_free (p);
+
+	  return 0;
+	}
+    }
+#endif /* HAVE_IPV6 */
+  
+  prefix_free (p);
+
+  on = 1;
+  ret = setsockopt (vty_sock, IPPROTO_TCP, TCP_NODELAY, 
+		    (char *) &on, sizeof (on));
+  if (ret < 0)
+    zlog (NULL, LOG_INFO, "can't set sockopt to vty_sock : %s", 
+	  safe_strerror (errno));
+
+  zlog (NULL, LOG_INFO, "Vty connection from %s",
+    (bufp = sockunion_su2str (&su)));
+  if (bufp)
+    XFREE (MTYPE_TMP, bufp);
+
+  vty = vty_create (vty_sock, &su, 0);
+
+  return 0;
 }
 
 /* Accept connection from the network. */
@@ -1788,7 +1888,7 @@ vty_accept (struct thread *thread)
   if (bufp)
     XFREE (MTYPE_TMP, bufp);
 
-  vty = vty_create (vty_sock, &su);
+  vty = vty_create (vty_sock, &su, 1);
 
   return 0;
 }
@@ -1861,7 +1961,7 @@ vty_serv_sock_addrinfo (const char *hostname, unsigned short port)
 
 /* Make vty server socket. */
 static void
-vty_serv_sock_family (const char* addr, unsigned short port, int family)
+vty_serv_sock_family (const char* addr, unsigned short port, int family, int is_vty)
 {
   int ret;
   union sockunion su;
@@ -1921,7 +2021,10 @@ vty_serv_sock_family (const char* addr, unsigned short port, int family)
     }
 
   /* Add vty server event. */
-  vty_event (VTY_SERV, accept_sock, NULL);
+  if (is_vty)
+	vty_event (VTY_SERV, accept_sock, NULL); /* default */
+  else
+  	vty_event (NBAPI_SERV, accept_sock, NULL); /* nbapi */
 }
 
 #ifdef VTYSH
@@ -2150,7 +2253,7 @@ vtysh_write (struct thread *thread)
 
 /* Determine address family to bind. */
 void
-vty_serv_sock (const char *addr, unsigned short port, const char *path)
+vty_serv_sock (const char *addr, unsigned short port, const char *path, int is_vty)
 {
   /* If port is set to 0, do not listen on TCP/IP at all! */
   if (port)
@@ -2158,13 +2261,13 @@ vty_serv_sock (const char *addr, unsigned short port, const char *path)
 
 #ifdef HAVE_IPV6
 #ifdef NRL
-      vty_serv_sock_family (addr, port, AF_INET);
-      vty_serv_sock_family (addr, port, AF_INET6);
+      vty_serv_sock_family (addr, port, AF_INET, is_vty);
+      vty_serv_sock_family (addr, port, AF_INET6, is_vty);
 #else /* ! NRL */
       vty_serv_sock_addrinfo (addr, port);
 #endif /* NRL*/
 #else /* ! HAVE_IPV6 */
-      vty_serv_sock_family (addr,port, AF_INET);
+      vty_serv_sock_family (addr,port, AF_INET, is_vty);
 #endif /* HAVE_IPV6 */
     }
 
@@ -2243,7 +2346,7 @@ vty_timeout (struct thread *thread)
 
 /* Read up configuration file from file_name. */
 static void
-vty_read_file (FILE *confp)
+vty_read_file (FILE *confp, int apply_node_match, int apply_node)
 {
   int ret;
   struct vty *vty;
@@ -2252,7 +2355,9 @@ vty_read_file (FILE *confp)
   vty->fd = 0;			/* stdout */
   vty->type = VTY_TERM;
   vty->node = CONFIG_NODE;
-  
+  vty->apply_node_match = apply_node_match;
+  vty->apply_node = apply_node;
+
   /* Execute configuration file */
   ret = config_from_file (vty, confp);
 
@@ -2268,13 +2373,15 @@ vty_read_file (FILE *confp)
            break;
        }
       fprintf (stderr, "Error occured during reading below line.\n%s\n", 
-	       vty->buf);
+	      vty->buf);
       vty_close (vty);
-      exit (1);
+      //exit (1);
+      return;
     }
 
   vty_close (vty);
 }
+
 
 static FILE *
 vty_use_backup_config (char *fullpath)
@@ -2343,7 +2450,8 @@ vty_use_backup_config (char *fullpath)
 /* Read up configuration file from file_name. */
 void
 vty_read_config (char *config_file,
-                 char *config_default_dir)
+                 char *config_default_dir,
+                 int match_node, int apply_node)
 {
   char cwd[MAXPATHLEN];
   FILE *confp = NULL;
@@ -2433,7 +2541,7 @@ vty_read_config (char *config_file,
         fullpath = config_default_dir;
     }
 
-  vty_read_file (confp);
+  vty_read_file (confp, match_node, apply_node);
 
   fclose (confp);
 
@@ -2523,6 +2631,10 @@ vty_event (enum event event, int sock, struct vty *vty)
 
   switch (event)
     {
+    case NBAPI_SERV:
+      vty_serv_thread = thread_add_read (master, nbapi_accept, vty, sock);
+      vector_set_index (Vvty_serv_thread, sock, vty_serv_thread);
+      break;
     case VTY_SERV:
       vty_serv_thread = thread_add_read (master, vty_accept, vty, sock);
       vector_set_index (Vvty_serv_thread, sock, vty_serv_thread);
@@ -2845,6 +2957,7 @@ DEFUN (show_history,
 static int
 vty_config_write (struct vty *vty)
 {
+#if 0
   vty_out (vty, "line vty%s", VTY_NEWLINE);
 
   if (vty_accesslist_name)
@@ -2874,7 +2987,7 @@ vty_config_write (struct vty *vty)
     }
   
   vty_out (vty, "!%s", VTY_NEWLINE);
-
+#endif
   return CMD_SUCCESS;
 }
 

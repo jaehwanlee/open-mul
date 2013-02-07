@@ -20,14 +20,15 @@
 #include "mul.h"
 
 #define RETURN_APP_ERR(A, B, R, T, C)  \
-do {                                              \
-     c_app_info_t *_app = (void *)A;              \
-     if (_app && _app->app_flags & C_APP_REMOTE){ \
-        if (!R) return 0;                         \
-        return c_remote_app_error(A, B, T, C);    \
-     } else {                                     \
-        return R;                                 \
-     }                                            \
+do {                                                \
+     c_app_info_t *_app = (void *)A;                \
+     if (_app && (_app->app_flags & C_APP_REMOTE || \
+         _app->app_flags & C_APP_AUX_REMOTE)) {     \
+        if (!R) return 0;                           \
+        return c_remote_app_error(A, B, T, C);      \
+     } else {                                       \
+        return R;                                   \
+     }                                              \
 }while(0)
 
 static void c_switch_app_list_exp(c_switch_t *sw);
@@ -41,6 +42,8 @@ static void c_app_packet_in_event(c_switch_t *sw, void *buf,
 static void c_app_port_change_event(c_switch_t *sw, void *buf, 
                               c_app_info_t *app, void *priv);
 static void c_app_flow_removed_event(c_switch_t *sw, void *buf, 
+                              c_app_info_t *app, void *priv);
+static void c_app_flow_mod_failed_event(c_switch_t *sw, void *buf,
                               c_app_info_t *app, void *priv);
 static void c_app_event_blackhole(void *app_arg, void *pkt_arg);
 
@@ -57,7 +60,8 @@ struct c_app_handler_op
     { NULL, c_app_dpunreg_event, c_switch_app_list_de_exp },
     { NULL, c_app_packet_in_event, NULL },
     { NULL, c_app_port_change_event, NULL },
-    { NULL, c_app_flow_removed_event, NULL }
+    { NULL, c_app_flow_removed_event, NULL },
+    { NULL, c_app_flow_mod_failed_event, NULL }
 };
 
 #define C_APP_OPS_SZ (sizeof(c_app_handler_ops)/sizeof(struct c_app_handler_op))
@@ -227,50 +231,6 @@ c_per_app_switch_unregister(void *arg, void *sw_arg)
     }
 }
 
-static void UNUSED
-c_per_switch_app_replay(void *k, void *v UNUSED, void *app_arg)
-{
-
-    struct cbuf *b;
-    struct ofp_switch_features *osf; 
-    struct ofp_phy_port *port_msg, *port;      
-    c_switch_t   *sw = k;
-    int n = 0;
-
-    b = of_prep_msg(sizeof(*osf) + (sw->n_ports * sizeof(struct ofp_phy_port)),
-                    OFPT_FEATURES_REPLY, 0);
-    osf = (void *)(b->data);
-
-    osf->datapath_id = htonll(sw->DPID);   
-    osf->n_buffers = htonl(sw->n_buffers); 
-    osf->n_tables = sw->n_tables;
-    osf->capabilities = htonl(sw->capabilities);
-    osf->actions = htonl(sw->actions);
-
-    port_msg = osf->ports;
-    
-    for (; n < OFSW_MAX_PORTS; n++) {
-        if (!sw->ports[n].valid) continue;
-
-        port = &sw->ports[n].p_info;
-
-        port_msg->port_no = htons(n);
-        port_msg->config = htonl(port->config); 
-        port_msg->state = htonl(port->state);
-        port_msg->curr = htonl(port->curr);
-        port_msg->advertised = htonl(port->advertised);
-        port_msg->supported = htonl(port->supported);
-        port_msg->peer = htonl(port->peer);
-
-        memcpy(port_msg->name, port->name, OFP_MAX_PORT_NAME_LEN);
-        memcpy(port_msg->hw_addr, port->hw_addr, OFP_ETH_ALEN);
-
-        port_msg++;
-    }
-
-    c_signal_app_event(sw, b, C_DP_REG, app_arg, NULL);
-}
-
 static void
 c_app_event_q_ent_free(void *ent)
 {
@@ -278,47 +238,22 @@ c_app_event_q_ent_free(void *ent)
 }
 
 static void
-c_per_switch_app_replay1(void *k, void *v UNUSED, void *arg)
+c_per_switch_app_replay(void *k, void *v UNUSED, void *arg)
 {
 
     struct c_sw_replay_q_ent *q_ent;
     GSList **app_replay_q =(GSList **)arg;
     struct cbuf *b;
     struct ofp_switch_features *osf; 
-    struct ofp_phy_port *port_msg, *port;      
-    c_switch_t   *sw = k;
-    int n = 0;
+    c_switch_t *sw = k;
 
+    c_rd_lock(&sw->lock);
     b = of_prep_msg(sizeof(*osf) + (sw->n_ports * sizeof(struct ofp_phy_port)), 
                     OFPT_FEATURES_REPLY, 0);
 
     osf = (void *)(b->data);
-    osf->datapath_id = htonll(sw->DPID);   
-    osf->n_buffers = htonl(sw->n_buffers); 
-    osf->n_tables = sw->n_tables;
-    osf->capabilities = htonl(sw->capabilities);
-    osf->actions = htonl(sw->actions);
-
-    port_msg = osf->ports;
-    
-    for (; n < OFSW_MAX_PORTS; n++) {
-        if (!sw->ports[n].valid) continue;
-
-        port = &sw->ports[n].p_info;
-
-        port_msg->port_no = htons(n);
-        port_msg->config = htonl(port->config); 
-        port_msg->state = htonl(port->state);
-        port_msg->curr = htonl(port->curr);
-        port_msg->advertised = htonl(port->advertised);
-        port_msg->supported = htonl(port->supported);
-        port_msg->peer = htonl(port->peer);
-
-        memcpy(port_msg->name, port->name, OFP_MAX_PORT_NAME_LEN);
-        memcpy(port_msg->hw_addr, port->hw_addr, OFP_ETH_ALEN);
-
-        port_msg++;
-    }
+    of_switch_detail_info(sw, osf);
+    c_rd_unlock(&sw->lock);
 
     if (!(q_ent = calloc(1, sizeof(struct c_sw_replay_q_ent)))) {
         c_log_err("%s: q_ent alloc failed", FN);
@@ -343,7 +278,7 @@ c_switch_replay_all(ctrl_hdl_t *hdl, void *app_arg)
     
     if (hdl->sw_hash_tbl) {
         g_hash_table_foreach(hdl->sw_hash_tbl,
-                             (GHFunc)c_per_switch_app_replay1, 
+                             (GHFunc)c_per_switch_app_replay, 
                              (void *)&app_replay_q);
     }       
                                 
@@ -491,7 +426,7 @@ c_switch_app_list_de_exp(c_switch_t *sw)
     }
 }
 
-static inline void
+static void
 c_remote_app_event(void *app_arg, void *pkt_arg)
 {
     c_app_info_t *app = app_arg;
@@ -523,6 +458,22 @@ c_remote_app_error(void *app_arg, struct cbuf *b,
 
     return 0;
 }
+
+static void
+c_remote_app_notify_success(void *app_arg)
+{
+    struct cbuf             *new_b;
+    struct c_ofp_auxapp_cmd *cofp_aac;
+
+    new_b = of_prep_msg(sizeof(*cofp_aac), C_OFPT_AUX_CMD, 0);
+
+    cofp_aac = (void *)(new_b->data);
+    cofp_aac->cmd_code = htonl(C_AUX_CMD_SUCCESS);
+
+    c_remote_app_event(app_arg, new_b);
+    return;
+}
+
 
 static void
 c_app_event_blackhole(void *app_arg UNUSED, void *pkt_arg)
@@ -580,11 +531,16 @@ c_app_dpreg_event(c_switch_t *sw, void *b,
                   c_app_info_t *app, void *priv UNUSED)
 {
     struct cbuf *new_b;
+    c_ofp_switch_add_t *sw_add;
+
     new_b = cbuf_realloc_headroom(b, 0, 0);
     if (!new_b) {
         c_log_err("%s: Failed to alloc buf", FN);
         return;
     }
+
+    sw_add = (void *)(new_b->data); 
+    C_ADD_ALIAS_IN_SWADD(sw_add, sw->alias_id);
 
     return c_app_event_finish(sw, app, new_b);
 }
@@ -602,6 +558,7 @@ c_app_dpunreg_event(c_switch_t *sw, void *buf,
 
     ofp_sd = (void *)(b->data);
     ofp_sd->datapath_id = htonll(sw->DPID);
+    ofp_sd->sw_alias = htonl(sw->alias_id);
 
     return c_app_event_finish(sw, app, b);
 }
@@ -630,6 +587,7 @@ c_app_packet_in_event(c_switch_t *sw, void *buf,
     cofp_pin->header.type = C_OFPT_PACKET_IN;
     cofp_pin->header.length = htons(room + orig_len);
     cofp_pin->datapath_id = htonll(sw->DPID); 
+    cofp_pin->sw_alias = htonl(sw->alias_id);
     memcpy(&cofp_pin->fl, fl, sizeof(*fl));
     
     return c_app_event_finish(sw, app, new_b);
@@ -668,7 +626,8 @@ c_app_port_change_event(c_switch_t *sw, void *buf,
     cofp_psts->header.version = OFP_VERSION;
     cofp_psts->header.type = C_OFPT_PORT_STATUS;
     cofp_psts->header.length = htons(room + orig_len);
-    cofp_psts->datapath_id = htonll(sw->DPID); 
+    cofp_psts->datapath_id = htonll(sw->DPID);
+    cofp_psts->sw_alias = htonl(sw->alias_id);
     cofp_psts->config_mask = htonl(config_mask); 
     cofp_psts->state_mask = htonl(state_mask); 
     
@@ -703,6 +662,48 @@ c_app_flow_removed_event(c_switch_t *sw, void *buf,
     cofm->priority = ofm->priority;
     memcpy(&cofm->reason, &ofm->reason, cp_len); 
     
+    return c_app_event_finish(sw, app, new_b);
+}
+
+static void
+c_app_flow_mod_failed_event(c_switch_t *sw, void *buf,
+                            c_app_info_t *app, void *priv)
+{
+    struct cbuf                   *b = buf, *new_b;
+    struct of_flow_mod_params     *fl_parms = priv;
+    struct ofp_error_msg          *ofp_err;
+    struct ofp_flow_mod            *ofp_fm;
+    c_ofp_error_msg_t             *cofp_em;
+    c_ofp_flow_mod_t              *cofp_fm;
+
+    assert(b && priv);
+
+    ofp_err = (void *)(b->data);
+    ofp_fm = (void *)(ofp_err->data);
+
+    new_b = of_prep_msg(sizeof(*cofp_em) + sizeof(struct c_ofp_flow_mod),
+                        C_OFPT_ERR_MSG, 0);
+    if (!new_b) {
+        c_log_err("%s: Failed to alloc buf", FN);
+        return;
+    }
+
+    cofp_em = (void *)(new_b->data);
+    cofp_em->type = ofp_err->type;
+    cofp_em->code = ofp_err->code;
+
+    cofp_fm = (void *)(cofp_em->data);
+    cofp_fm->header.version = OFP_VERSION;
+    cofp_fm->header.type = C_OFPT_FLOW_MOD;
+    cofp_fm->header.length = htons(sizeof(*cofp_fm));
+
+    cofp_fm->datapath_id = htonll(sw->DPID);
+    cofp_fm->sw_alias = htonl(sw->alias_id);
+    memcpy(&cofp_fm->flow, &fl_parms->flow, sizeof(struct flow));
+    cofp_fm->wildcards = fl_parms->wildcards;
+    cofp_fm->priority = htons(fl_parms->prio);
+    cofp_fm->command = ofp_fm->command;
+
     return c_app_event_finish(sw, app, new_b);
 }
 
@@ -743,10 +744,13 @@ static int  __fastpath
 c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
 {
     c_switch_t *sw;
+    c_app_info_t *app = app_arg;
     struct c_ofp_flow_mod *cofp_fm = data;
     size_t action_len = ntohs(cofp_fm->header.length) - sizeof(*cofp_fm);
     struct of_flow_mod_params fl_parms;
     int ret = -1;
+
+    assert(app);
 
     if (ntohs(cofp_fm->header.length) < sizeof(c_ofp_flow_mod_t)) {
         c_log_err("%s:Cmd(%u) Size err %u of %lu", FN, C_OFPT_FLOW_MOD,
@@ -757,14 +761,28 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
 
     memset(&fl_parms, 0, sizeof(fl_parms));
 
-    sw = of_switch_get(&ctrl_hdl, ntohll(cofp_fm->DPID));
+    if (cofp_fm->flags & C_FL_ENT_SWALIAS) {
+        sw = of_switch_alias_get(&ctrl_hdl, (int)(ntohl(cofp_fm->sw_alias)));
+    } else {
+        sw = of_switch_get(&ctrl_hdl, ntohll(cofp_fm->DPID));
+    }
+
     if (!sw) {
-        //c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
-        //          (unsigned long long)ntohll(cofp_fm->DPID));
+        c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
+                  (unsigned long long)ntohll(cofp_fm->DPID));
         RETURN_APP_ERR(app_arg, b, ret, OFPET_BAD_REQUEST, OFPBRC_BAD_DPID);  
     }
 
-    /* FIXME - Validate flow ?? */
+    if (app->app_flags & C_APP_AUX_REMOTE) {
+        app = c_app_get(&ctrl_hdl, C_VTY_NAME);
+        if (!app) {
+            /* This condition should never occur */
+            c_log_err("%s: %s app not found", FN, C_VTY_NAME);
+            app = app_arg;
+        }
+    }
+
+    of_flow_correction(&cofp_fm->flow, &cofp_fm->wildcards);
 
     if (of_validate_actions(cofp_fm->actions, action_len)) {
         c_log_err("%s: Invalid action list", FN);
@@ -778,7 +796,7 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
                        OFPFMFC_BAD_FLAG); 
     }
 
-    fl_parms.app_owner = app_arg;
+    fl_parms.app_owner = app;
     fl_parms.flow = &cofp_fm->flow;
     fl_parms.action_len = action_len;
     fl_parms.wildcards = cofp_fm->wildcards;
@@ -812,6 +830,9 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
     c_thread_sg_tx_sync(&sw->conn);
 
     of_switch_put(sw);
+    if (app != app_arg) {
+        c_app_put(app);
+    } 
 
     RETURN_APP_ERR(app_arg, b, ret, OFPET_FLOW_MOD_FAILED, OFPFMFC_GENERIC); 
 }
@@ -875,7 +896,7 @@ mul_app_send_flow_add(void *app_name, void *sw_arg, uint64_t dpid, struct flow *
 
 int __fastpath
 mul_app_send_flow_del(void *app_name, void *sw_arg, uint64_t dpid, struct flow *fl,
-                      uint32_t wildcards, uint16_t oport, uint8_t flags)
+                      uint32_t wildcards, uint16_t oport, uint16_t prio, uint8_t flags)
 {
     c_switch_t *sw = sw_arg;
     struct of_flow_mod_params fl_parms;
@@ -907,6 +928,7 @@ mul_app_send_flow_del(void *app_name, void *sw_arg, uint64_t dpid, struct flow *
     fl_parms.flow = fl;
     fl_parms.wildcards = htonl(wildcards);
     fl_parms.flags = flags;
+    fl_parms.prio = htons(prio);;
     fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
 
     ret = of_flow_del(sw, &fl_parms);
@@ -1095,6 +1117,222 @@ c_app_set_fpops_command(void *app_arg, struct cbuf *b, void *data)
     return 0;
 }
 
+static void
+c_app_send_per_flow_info(void *arg, c_fl_entry_t *ent)
+{
+    struct c_buf_iter_arg *iter_arg = arg;
+    c_ofp_flow_mod_t            *cofp_fm;
+    void                        *act;
+    struct cbuf                 *b;
+    size_t                      tot_len = 0;
+
+    c_rd_lock(&ent->FL_LOCK);
+    if (iter_arg->wr_ptr &&  /* wr_ptr field is overridden */
+        !(ent->FL_FLAGS & C_FL_ENT_STATIC)) {
+        c_rd_unlock(&ent->FL_LOCK);
+        return;
+    }
+
+    tot_len = sizeof(*cofp_fm) + ent->action_len;
+
+    b = of_prep_msg(tot_len, C_OFPT_FLOW_MOD, 0);
+
+    cofp_fm = (void *)(b->data);
+    cofp_fm->sw_alias = htonl((uint32_t)ent->sw->alias_id);
+    cofp_fm->datapath_id = htonll(ent->sw->DPID);
+    cofp_fm->command = C_OFPC_ADD;
+    cofp_fm->flags = ent->FL_FLAGS;
+    memcpy(&cofp_fm->flow, &ent->fl, sizeof(struct flow));
+    cofp_fm->wildcards = ent->FL_WILDCARDS;
+    cofp_fm->priority = htons(ent->FL_PRIO);
+    cofp_fm->itimeo = htons(ent->FL_ITIMEO);
+    cofp_fm->htimeo = htons(ent->FL_HTIMEO);
+    cofp_fm->buffer_id = 0xffffffff;
+    cofp_fm->oport = OFPP_NONE;
+
+    act = (void *)(cofp_fm+1);
+    memcpy(act, ent->actions, ent->action_len);
+
+    c_rd_unlock(&ent->FL_LOCK);
+
+    c_remote_app_event(iter_arg->data, b);
+}
+
+
+static void
+c_app_per_switch_flow_info(void *k, void *v UNUSED, void *arg)
+{
+    c_switch_t  *sw = k;
+    struct c_buf_iter_arg *iter_arg = arg;
+
+    of_flow_traverse_tbl_all(sw, iter_arg, c_app_send_per_flow_info);
+}
+
+static void 
+c_app_send_flow_info(void *app_arg, struct cbuf *b, bool dump_all)
+{
+    struct c_buf_iter_arg iter_arg = { NULL, NULL };
+    struct c_ofp_auxapp_cmd *cofp_aac = (void *)(b->data);
+    struct c_ofp_req_dpid_attr *cofp_rda;
+    c_switch_t *sw = NULL;
+
+    if (ntohs(cofp_aac->header.length) <
+        sizeof(*cofp_aac) + sizeof(*cofp_rda)) {
+        c_log_err("%s: Size err (%u) of (%u)", FN,
+                  ntohs(cofp_aac->header.length),
+                  sizeof(*cofp_aac) + sizeof(*cofp_rda));
+        c_remote_app_error(app_arg, b, OFPET_BAD_REQUEST, OFPBRC_BAD_LEN);
+        return;
+    }
+
+    iter_arg.data = app_arg;
+    if (!dump_all) {
+        iter_arg.wr_ptr = app_arg;
+    }
+
+    cofp_rda = (void *)(cofp_aac->data);
+    sw = of_switch_get(&ctrl_hdl, ntohll(cofp_rda->datapath_id));
+    if (!sw) {
+        c_log_err("%s: Switch(0x%llx) not found", FN, ntohll(cofp_rda->datapath_id));
+        if (!cofp_rda->datapath_id) {
+            of_switch_traverse_all(&ctrl_hdl, c_app_per_switch_flow_info,
+                                   &iter_arg);
+            goto done;
+        }
+        c_remote_app_error(app_arg, b, OFPET_BAD_REQUEST, OFPBRC_BAD_DPID);
+        return;
+    }
+
+    of_flow_traverse_tbl_all(sw, &iter_arg, c_app_send_per_flow_info);
+
+    of_switch_put(sw);
+
+done:
+    c_remote_app_notify_success(app_arg);
+
+    return;
+}
+
+static void
+c_app_per_switch_brief_info(void *k, void *v UNUSED, void *arg)
+{   
+    c_switch_t   *sw = k;
+    struct c_buf_iter_arg *iter_arg = arg;
+    struct c_ofp_switch_brief *cofp_sb = (void *)(iter_arg->wr_ptr);
+
+    c_rd_lock(&sw->lock);
+    of_switch_brief_info(sw, cofp_sb);
+
+    c_rd_unlock(&sw->lock);
+    iter_arg->wr_ptr += sizeof(*cofp_sb);
+}
+   
+static void 
+c_app_send_brief_switch_info(void *app_arg, struct cbuf *b)
+{
+    struct c_buf_iter_arg iter_arg = { NULL, NULL };
+    size_t n_switches = 0;
+    struct c_ofp_auxapp_cmd *cofp_aac;
+
+    c_rd_lock(&ctrl_hdl.lock);
+
+    if (!ctrl_hdl.sw_hash_tbl ||
+        !(n_switches = g_hash_table_size(ctrl_hdl.sw_hash_tbl))) {
+        c_rd_unlock(&ctrl_hdl.lock);
+        c_remote_app_error(app_arg, b, OFPET_BAD_REQUEST, OFPBRC_BAD_NO_INFO);
+        return;
+    }
+
+    b = of_prep_msg(sizeof(c_ofp_auxapp_cmd_t) +
+                    (n_switches * sizeof(c_ofp_switch_brief_t)),
+                    C_OFPT_AUX_CMD, 0); 
+    cofp_aac = (void *)(b->data);
+    cofp_aac->cmd_code = ntohl(C_AUX_CMD_MUL_GET_SWITCHES_REPLY);
+    iter_arg.wr_ptr = cofp_aac->data;
+    iter_arg.data = (void *)(b->data);
+
+    __of_switch_traverse_all(&ctrl_hdl, c_app_per_switch_brief_info,
+                             &iter_arg);
+
+    c_rd_unlock(&ctrl_hdl.lock);
+
+    c_remote_app_event(app_arg, b);
+}
+
+static void
+c_app_send_detail_switch_info(void *app_arg, struct cbuf *b)
+{
+    struct c_ofp_auxapp_cmd *cofp_aac = (void *)(b->data);
+    struct c_ofp_req_dpid_attr *cofp_rda;
+    struct ofp_switch_features *osf;
+    c_switch_t *sw;
+
+    if (ntohs(cofp_aac->header.length) < 
+        sizeof(*cofp_aac) + sizeof(*cofp_rda)) {
+        c_log_err("%s: Size err (%u) of (%u)", FN, ntohs(cofp_aac->header.length), 
+                  sizeof(*cofp_aac) + sizeof(*cofp_rda));
+        c_remote_app_error(app_arg, b, OFPET_BAD_REQUEST, OFPBRC_BAD_LEN);
+    }
+
+    cofp_rda = (void *)(cofp_aac->data);
+    sw = of_switch_get(&ctrl_hdl, ntohll(cofp_rda->datapath_id));
+    if (!sw) {
+        c_remote_app_error(app_arg, b, OFPET_BAD_REQUEST, OFPBRC_BAD_NO_INFO);
+        return;
+    }
+
+    c_rd_lock(&sw->lock);
+    b = of_prep_msg(sizeof(*osf) + (sw->n_ports * sizeof(struct ofp_phy_port)),
+                    OFPT_FEATURES_REPLY, 0);
+
+    osf = (void *)(b->data);
+    of_switch_detail_info(sw, osf);
+    c_rd_unlock(&sw->lock);
+    of_switch_put(sw);
+
+    c_remote_app_event(app_arg, b);
+}
+
+static int
+c_app_aux_request_handler(void *app_arg, struct cbuf *b, void *data)
+{
+    struct c_ofp_auxapp_cmd *cofp_aac = data;
+
+    if (ntohs(cofp_aac->header.length) < sizeof(struct c_ofp_auxapp_cmd)) {
+        c_log_err("%s: Size err (%u) of (%u)", FN, ntohs(cofp_aac->header.length), 
+                   sizeof(struct c_ofp_auxapp_cmd));
+        RETURN_APP_ERR(app_arg, b, -1, OFPET_BAD_REQUEST, OFPBRC_BAD_LEN);
+    }
+
+    switch (ntohl(cofp_aac->cmd_code)) {
+    case C_AUX_CMD_MUL_GET_SWITCHES:
+        c_app_send_brief_switch_info(app_arg, b);
+        break;
+    case C_AUX_CMD_MUL_GET_SWITCH_DETAIL:
+        c_app_send_detail_switch_info(app_arg, b);
+        break;
+    case C_AUX_CMD_MUL_GET_APP_FLOW:
+        c_app_send_flow_info(app_arg, b, false); 
+        break;
+    case C_AUX_CMD_MUL_GET_ALL_FLOWS:
+        c_app_send_flow_info(app_arg, b, true); 
+    default:
+        RETURN_APP_ERR(app_arg, b, -1, OFPET_BAD_REQUEST, OFPBRC_BAD_GENERIC);
+        break;
+    }
+
+    return 0;
+} 
+
+void
+c_aux_app_init(void *app_arg)
+{
+    c_app_info_t *app = app_arg;
+
+    app->app_flags = C_APP_AUX_REMOTE;
+    app->ev_cb = c_remote_app_event;
+}
+
 int  __fastpath
 __mul_app_command_handler(void *app_arg, struct cbuf *b)
 {
@@ -1111,6 +1349,8 @@ __mul_app_command_handler(void *app_arg, struct cbuf *b)
         return c_app_unregister_app_command(app_arg, b, hdr);
     case C_OFPT_SET_FPOPS:
         return c_app_set_fpops_command(app_arg, b, hdr);
+    case C_OFPT_AUX_CMD:
+        return c_app_aux_request_handler(app_arg, b, hdr);
     }
 
     return -1;

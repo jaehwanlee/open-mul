@@ -131,6 +131,7 @@ GAWK = @GAWK@
 GLIB_INCLUDE = @GLIB_INCLUDE@
 GREP = @GREP@
 HAVE_L2SW_MODULE = @HAVE_L2SW_MODULE@
+HAVE_LLDP_MODULE = @HAVE_LLDP_MODULE@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -222,10 +223,20 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 SUBDIRS = common-libs/mul-lib common-libs/3rd-party/derived-lib  \
-          common-libs/3rd-party/quagga-lib mul application/l2switch
+          common-libs/3rd-party/quagga-lib \
+          services/loadable/topo_routing \
+          mul \
+          application/l2switch \
+          application/fabric \
+          application/cli 
 
 DIST_SUBDIRS = common-libs/mul-lib common-libs/3rd-party/derived-lib \
-               common-libs/3rd-party/quagga-lib mul application/l2switch
+               common-libs/3rd-party/quagga-lib \
+               services/loadable/topo_routing/ \
+               mul \
+               application/l2switch \
+               application/fabric \
+               application/cli
 
 EXTRA_DIST = aclocal.m4
 ACLOCAL_AMFLAGS = -I m4

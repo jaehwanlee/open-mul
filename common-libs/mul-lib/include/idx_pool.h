@@ -17,14 +17,22 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-typedef struct ipool_hdl_
+typedef struct ipool_arr_
 {
     int next_idx;
+    void *priv;
+}ipool_arr_t;
+
+typedef struct ipool_hdl_
+{
+    c_rw_lock_t lock;
+    int next_idx;
     int max_idx;
-    int *idx_arr;    
+    ipool_arr_t *idx_arr;    
 }ipool_hdl_t;
 
-int ipool_get(ipool_hdl_t *pool);
+int ipool_get(ipool_hdl_t *pool, void *priv);
 int ipool_put(ipool_hdl_t *pool, int ret_idx);
 ipool_hdl_t *ipool_create(size_t sz, uint32_t start_idx);
 void ipool_delete(ipool_hdl_t *pool);
+void *ipool_idx_priv(ipool_hdl_t *pool, int idx);

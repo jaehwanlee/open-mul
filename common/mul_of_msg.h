@@ -19,6 +19,8 @@
 #ifndef __MUL_OF_MSG_H__
 #define __MUL_OF_MSG_H__
 
+#define OF_ALL_TABLES (0xff) 
+
 static inline int
 of_get_data_len(void *h)
 {
@@ -37,7 +39,7 @@ c_app_of_hdr_valid(void *h_arg)
 {
     struct ofp_header *h = h_arg;
     return ntohs(h->length) <= 4096 && h->version == 1 &&
-            ((h->type >= 0 && h->type <= C_OFPT_SET_FPOPS));
+            ((h->type >= 0 && h->type <= C_OFPT_AUX_CMD));
 }
 
 struct of_flow_mod_params {
@@ -66,8 +68,18 @@ struct of_pkt_out_params {
 
 size_t of_make_action_output(char **pbuf, size_t bufroom, uint16_t oport);
 size_t of_make_action_set_vid(char **pbuf, size_t bufroom, uint16_t vid);
+size_t of_make_action_strip_vlan(char **pbuf, size_t bufroom);
 size_t of_make_action_set_dmac(char **pbuf, size_t bufroom, uint8_t *dmac);
+size_t of_make_action_set_nw_saddr(char **pbuf, size_t bufroom, uint32_t nw_saddr);
+size_t of_make_action_set_nw_daddr(char **pbuf, size_t bufroom, uint32_t nw_saddr);
+size_t of_make_action_set_vlan_pcp(char **pbuf, size_t bufroom, uint8_t vlan_pcp);
+size_t of_make_action_set_smac(char **pbuf, size_t bufroom, uint8_t *smac);
+size_t of_make_action_set_nw_tos(char **pbuf, size_t bufroom, uint8_t tos);
+size_t of_make_action_set_tp_dport(char **pbuf, size_t bufroom, uint16_t port);
+size_t of_make_action_set_tp_sport(char **pbuf, size_t bufroom, uint16_t port);
 char *of_dump_actions(void *actions, size_t action_len);
+char *of_dump_flow(struct flow *fl, uint32_t wildcards);
+int of_flow_correction(struct flow *fl, uint32_t *wildcards);
 int of_validate_actions(void *actions, size_t action_len);
 char *of_dump_wildcards(uint32_t wildcards);
 void *of_prep_msg(size_t len, uint8_t type, uint32_t xid);
@@ -80,6 +92,8 @@ struct cbuf *of_prep_flow_add_msg(const struct flow *flow, uint32_t buffer_id,
 struct cbuf *of_prep_flow_del_msg(const struct flow *flow, uint32_t wildcards,
                                   uint16_t oport, bool strict);
 void *of_prep_pkt_out_msg(struct of_pkt_out_params *parms);
+struct cbuf *of_prep_flow_stat_msg(const struct flow *flow, uint32_t wildcards,
+                                   uint8_t tbl_id, uint16_t oport);
 
 
 #endif

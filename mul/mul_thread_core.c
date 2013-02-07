@@ -31,6 +31,8 @@ c_set_thread_dfl_affinity(void)
     CPU_ZERO(&cpu);
     CPU_SET(ctrl_hdl.n_threads + ctrl_hdl.n_appthreads, &cpu);
     pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpu);
+
+    return 0;
 }
 
 /* TODO : Better Algo */
@@ -251,6 +253,14 @@ c_main_thread_final_init(struct c_main_ctx *m_ctx)
                                           EV_READ|EV_PERSIST,
                                           c_app_accept, (void*)m_ctx);
     event_add(m_ctx->c_app_accept_event, NULL);
+
+    c_listener = c_server_socket_create(INADDR_ANY, C_APP_AUX_LISTEN_PORT);
+    assert(c_listener);
+    m_ctx->c_app_aux_accept_event= event_new(m_ctx->cmn_ctx.base, c_listener, 
+                                          EV_READ|EV_PERSIST,
+                                          c_aux_app_accept, (void*)m_ctx);
+    event_add(m_ctx->c_app_aux_accept_event, NULL);
+
     m_ctx->cmn_ctx.run_state = THREAD_STATE_RUNNING;
 
     c_set_thread_dfl_affinity();

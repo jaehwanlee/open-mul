@@ -34,10 +34,14 @@ struct vty
   int fd;
 
   /* Is this vty connect to file or not */
-  enum {VTY_TERM, VTY_FILE, VTY_SHELL, VTY_SHELL_SERV} type;
+  enum {VTY_TERM, VTY_FILE, VTY_SHELL, VTY_SHELL_SERV, VTY_NBAPI} type;
 
   /* Node status of this vty */
   int node;
+
+  /* Node match */
+  int apply_node_match;
+  int apply_node; 
 
   /* What address is this vty comming from. */
   char *address;
@@ -207,9 +211,9 @@ extern void vty_terminate (void);
 extern void vty_reset (void);
 extern struct vty *vty_new (void);
 extern int vty_out (struct vty *, const char *, ...) PRINTF_ATTRIBUTE(2, 3);
-extern void vty_read_config (char *, char *);
+extern void vty_read_config (char *, char *, int, int);
 extern void vty_time_print (struct vty *, int);
-extern void vty_serv_sock (const char *, unsigned short, const char *);
+extern void vty_serv_sock (const char *, unsigned short, const char *, int);
 extern void vty_close (struct vty *);
 extern char *vty_get_cwd (void);
 extern void vty_log (const char *level, const char *proto, 

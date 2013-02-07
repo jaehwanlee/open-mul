@@ -77,6 +77,12 @@ else
   exit 1;
 fi
 
+AC_ARG_WITH(lldp,
+[  --with-lldp              Set lldp as "m" for lldp as a module])
+AM_CONDITIONAL(HAVE_LLDP_MODULE, test "$with_lldp" = m)
+
+AC_SUBST([HAVE_LLDP_MODULE])
+
 AC_ARG_WITH(l2sw,
 [  --with-l2sw              Set l2sw as "m" for l2sw as a module])
 AM_CONDITIONAL(HAVE_L2SW_MODULE, test "$with_l2sw" = m)
@@ -153,5 +159,5 @@ AC_CHECK_LIB(c, inet_ntop, [AC_DEFINE(HAVE_INET_NTOP,,inet_ntop)])
 AC_CHECK_LIB(c, inet_pton, [AC_DEFINE(HAVE_INET_PTON,,inet_pton)])
 AC_CHECK_LIB(crypt, crypt)
 
-AC_CONFIG_FILES([Makefile mul/Makefile application/l2switch/Makefile common-libs/3rd-party/derived-lib/Makefile common-libs/3rd-party/quagga-lib/Makefile common-libs/mul-lib/Makefile])
+AC_CONFIG_FILES([Makefile mul/Makefile application/l2switch/Makefile application/fabric/Makefile application/cli/Makefile services/loadable/topo_routing/Makefile common-libs/3rd-party/derived-lib/Makefile common-libs/3rd-party/quagga-lib/Makefile common-libs/mul-lib/Makefile])
 AC_OUTPUT

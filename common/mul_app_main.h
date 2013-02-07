@@ -19,7 +19,6 @@
 #ifndef __MUL_APP_MAIN_H___
 #define __MUL_APP_MAIN_H___
 
-#define C_APP_PORT 7744
 #define C_APP_RCV_BUF_SZ 4096
 #define C_APP_VTY_COMMON_PATH "/var/run/app_"
 

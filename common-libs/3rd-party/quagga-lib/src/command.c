@@ -497,6 +497,36 @@ install_element (enum node_type ntype, struct cmd_element *cmd)
     }
 
   vector_set (cnode->cmd_vector, cmd);
+  cmd->ntype = ntype;
+
+  if (cmd->strvec == NULL)
+    cmd->strvec = cmd_make_descvec (cmd->string, cmd->doc);
+
+  cmd->cmdsize = cmd_cmdsize (cmd->strvec);
+}
+
+/* Install a command into a node with attribute */
+void
+install_element_attr_type (enum node_type ntype, struct cmd_element *cmd,
+                           enum node_type attr_type)
+{
+  struct cmd_node *cnode;
+  
+  /* cmd_init hasn't been called */
+  if (!cmdvec)
+    return;
+  
+  cnode = vector_slot (cmdvec, ntype);
+
+  if (cnode == NULL) 
+    {
+      fprintf (stderr, "Command node %d doesn't exist, please check it\n",
+	       ntype);
+      exit (1);
+    }
+
+  vector_set (cnode->cmd_vector, cmd);
+  cmd->ntype = attr_type;
 
   if (cmd->strvec == NULL)
     cmd->strvec = cmd_make_descvec (cmd->string, cmd->doc);
@@ -555,6 +585,7 @@ config_write_host (struct vty *vty)
         vty_out (vty, "enable password %s%s", host.enable, VTY_NEWLINE);
     }
 
+#ifdef  MUL_CONFIG_NEED_ZLOG
   if (zlog_default->default_lvl != LOG_DEBUG)
     {
       vty_out (vty, "! N.B. The 'log trap' command is deprecated.%s",
@@ -606,6 +637,8 @@ config_write_host (struct vty *vty)
   if (zlog_default->timestamp_precision > 0)
     vty_out (vty, "log timestamp precision %d%s",
 	     zlog_default->timestamp_precision, VTY_NEWLINE);
+
+#endif
 
   if (host.advanced)
     vty_out (vty, "service advanced-vty%s", VTY_NEWLINE);
@@ -2249,6 +2282,7 @@ cmd_execute_command_strict (vector vline, struct vty *vty,
   /* To execute command, matched_count must be 1. */
   if (matched_count == 0)
     {
+      if (vty->apply_node_match) return CMD_SUCCESS;
       if (incomplete_count)
 	return CMD_ERR_INCOMPLETE;
       else
@@ -2287,6 +2321,9 @@ cmd_execute_command_strict (vector vline, struct vty *vty,
       if (argc >= CMD_ARGC_MAX)
 	return CMD_ERR_EXEED_ARGC_MAX;
     }
+
+  if (vty->apply_node_match && vty->apply_node != matched_element->ntype)
+    return CMD_SUCCESS;
 
   /* For vtysh execution. */
   if (cmd)
@@ -2587,7 +2624,7 @@ DEFUN (config_write_file,
   file_vty->type = VTY_FILE;
 
   /* Config file header print. */
-  vty_out (file_vty, "!\n! Zebra configuration saved from vty\n!   ");
+  vty_out (file_vty, "!\n! mul-cli configuration saved from vty\n!   ");
   vty_time_print (file_vty, 1);
   vty_out (file_vty, "!\n");
 

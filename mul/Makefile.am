@@ -2,6 +2,7 @@ ACLOCAL_AMFLAGS = -I m4 ${ACLOCAL_FLAGS}
 
 pkgconfigdir=$(libdir)/pkgconfig
 
+lib_LTLIBRARIES = libmul.la
 bin_PROGRAMS = mul 
 
 LIB_GLIB = @LIB_GLIB@
@@ -10,12 +11,15 @@ GLIB_INCLUDE = @GLIB_INCLUDE@
 LIBEVENT_INCLUDE = @LIBEVENT_INCLUDE@
 
 INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
+           -I$(top_srcdir)/services/loadable/topo_routing/ \
            -I$(top_srcdir)/common-libs/3rd-party/derived-lib/include/ \
            -I$(top_srcdir)/common-libs/3rd-party/quagga-lib/include/ \
            -I$(top_srcdir)/common-libs/mul-lib/include/
 
 DEFS = @DEFS@ -DSYSCONFDIR=\"$(sysconfdir)/\"
 
+libmul_la_SOURCES = \
+            mul_servlet.c
 
 mul_SOURCES = mul_app_interface.c mul_fp.c mul_main.c mul_thread_core.c \
               mul_events.c mul_ipc.c mul_of.c mul_vty.c ../common/mul_of_msg.c

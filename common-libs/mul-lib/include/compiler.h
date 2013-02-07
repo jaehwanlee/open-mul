@@ -41,4 +41,11 @@
 
 #define __aligned __attribute__((aligned(CPU_L1_CACHE_SZ)))
 
+#define mb() __sync_synchronize()
+#define wmb() mb()
+#define rmb() mb()
+
+#define FETCH_ALWAYS(x) (*(volatile typeof(x) *)&(x))
+
+
 #endif

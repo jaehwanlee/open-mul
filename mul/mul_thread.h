@@ -99,6 +99,7 @@ struct c_main_ctx
 
     struct event        *c_accept_event;
     struct event        *c_app_accept_event;
+    struct event        *c_app_aux_accept_event;
 };
 
 
@@ -147,6 +148,7 @@ struct c_ipc_hdr
 struct c_ipc_thread_msg
 {
     DEF_STRUCT_VALID_PAIR(int, new_conn_fd);
+    DEF_STRUCT_VALID_PAIR(int, aux_conn);
 };
 
 #define MIN_IPC_THREAD_MSG_SZ (sizeof(struct c_ipc_hdr) + \

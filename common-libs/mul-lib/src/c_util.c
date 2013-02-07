@@ -126,7 +126,6 @@ c_pid_output(const char *path)
 }
 
 
-
 int
 c_make_socket_nonblocking(int fd)
 {
@@ -140,6 +139,21 @@ c_make_socket_nonblocking(int fd)
 
     return 0;
 }
+
+int
+c_make_socket_blocking(int fd)
+{
+    int flags;
+    if ((flags = fcntl(fd, F_GETFL, NULL)) < 0) {
+        return -1;
+    }
+    if (fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1) {
+        return -1;
+    }
+
+    return 0;
+}
+
 
 int
 c_server_socket_create(uint32_t server_ip, uint16_t port)
@@ -175,6 +189,40 @@ c_server_socket_create(uint32_t server_ip, uint16_t port)
 }
 
 int
+c_server_socket_create_blocking(uint32_t server_ip, uint16_t port)
+{
+    struct sockaddr_in sin;
+    int                fd;
+    int                one = 1;
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        perror("");
+        return fd;
+    }
+
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = htonl(server_ip);
+    sin.sin_port = htons(port);
+
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    if (bind(fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+        perror("bind");
+        return -1;
+    }
+
+    if (listen(fd, 16) < 0) {
+        perror("listen");
+        return -1;
+    }
+
+    return fd;
+}
+
+
+
+int
 c_client_socket_create(char *server_ip, uint16_t port)
 {
     struct sockaddr_in sin;
@@ -205,6 +253,33 @@ c_client_socket_create(char *server_ip, uint16_t port)
     return fd;
 }
 
+
+int 
+c_client_socket_create_blocking(char *server_ip, uint16_t port)
+{   
+    struct sockaddr_in sin;
+    int                fd;
+    
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        perror("socket");
+        return fd;
+    }
+    
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(port);
+    if (!inet_aton(server_ip, &sin.sin_addr)) {
+        return -1;
+    }   
+        
+    memset(sin.sin_zero, 0, sizeof sin.sin_zero);
+    if (connect(fd, (struct sockaddr *)&sin, sizeof(struct sockaddr)) == -1) {
+        perror("connect");
+        return -1;
+    }
+
+    return fd;
+}
 
 int
 c_server_socket_close(int fd)
@@ -431,3 +506,117 @@ sched_tx_event:
     return err;
 }
 
+
+int
+c_socket_write_block_loop(c_conn_t *conn, struct cbuf *buf)
+{
+    int         sent_sz;
+    int         err = 0;
+    int         retries = C_MAX_TX_RETRIES;
+    
+    if (unlikely(conn->dead)) {
+        err = -1;
+        goto out;
+    }
+
+try_again:
+    sent_sz = send(conn->fd, buf->data, buf->len, MSG_NOSIGNAL);
+    if (sent_sz <= 0) {
+        if (errno == EINTR) goto retry;
+        conn->tx_err++;
+        conn->dead = 1;
+        goto out;
+    }
+
+    if (sent_sz < buf->len) {
+        cbuf_pull(buf, sent_sz);
+        goto retry;
+    }
+
+    conn->tx_pkts++;
+
+    free_cbuf(buf);
+
+out:
+    return err;
+
+retry:
+    if (retries-- <= 0) {
+        conn->tx_err++;
+        free_cbuf(buf);
+        err = -1;
+        goto out;
+    }
+
+    goto try_again;
+}
+
+
+int 
+c_socket_read_block_loop(int fd, void *arg, c_conn_t *conn,
+                         const size_t max_rcv_buf_sz, 
+                         conn_proc_t proc_msg, int (*get_data_len)(void *),
+                         bool (*validate_hdr)(void *), size_t hdr_sz) 
+{
+    ssize_t             rd_sz = -1;
+    struct cbuf         *b = NULL;
+    size_t              rcv_buf_sz = hdr_sz;
+
+    b = alloc_cbuf(max_rcv_buf_sz);
+
+    while (1) {
+        if (!cbuf_tailroom(b)) {
+            struct cbuf *new;
+
+            new = alloc_cbuf(b->len + max_rcv_buf_sz);
+            if (b->len) {
+                memcpy(new->data, b->data, b->len);
+                cbuf_put(new, b->len);
+            }
+            free_cbuf(b);
+            b = new;
+        }
+
+        if (conn->conn_type == C_CONN_TYPE_SOCK) {
+            rd_sz = recv(fd, b->tail, rcv_buf_sz, 0);
+        } else {
+            rd_sz = read(fd, b->tail, rcv_buf_sz);
+        }
+
+        if (rd_sz <= 0) {
+            free_cbuf(b);
+            break;
+        }
+
+        cbuf_put(b, rd_sz);
+
+        if (b->len >= rcv_buf_sz) {
+            if (b->len > hdr_sz) {
+                if (b->len >= get_data_len(b->data)) {
+                    if (!validate_hdr(b->data)) {
+                        printf("%s: Corrupted header", FN);
+                        return 0; /* Close the socket */
+                    }
+
+                    proc_msg(arg, b);
+                    rd_sz = b->len;
+                    /* Note we don't free cbuf here and its upto proc_msg 
+                     * to free cbuf 
+                     */
+                    break;
+                }
+            }
+            rcv_buf_sz = get_data_len(b->data) - hdr_sz;
+            continue;
+        }
+
+        if (b->len < hdr_sz) {
+            rcv_buf_sz = hdr_sz - rd_sz;
+        } else {
+            rcv_buf_sz = get_data_len(b->data) - rd_sz;
+        }
+
+    }
+
+    return rd_sz;
+}

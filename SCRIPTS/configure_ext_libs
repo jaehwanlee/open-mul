@@ -1,12 +1,12 @@
 #!/bin/bash
 
 pushd ../common-libs/3rd-party/ >> /dev/null
-wget https://github.com/downloads/libevent/libevent/libevent-2.0.18-stable.tar.gz
+wget https://github.com/downloads/libevent/libevent/libevent-2.0.21-stable.tar.gz
 wget http://ftp.gnome.org/pub/gnome/sources/glib/2.32/glib-2.32.0.tar.xz 
-tar -xzf libevent-2.0.18-stable.tar.gz
+tar -xzf libevent-2.0.21-stable.tar.gz
 tar -Jxf glib-2.32.0.tar.xz 
 popd  >> /dev/null
-pushd ../common-libs/3rd-party/libevent-2.0.18-stable/ >> /dev/null
+pushd ../common-libs/3rd-party/libevent-2.0.21-stable/ >> /dev/null
 ./configure && make
 popd  >> /dev/null
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib

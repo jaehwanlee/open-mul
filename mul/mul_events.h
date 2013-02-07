@@ -28,6 +28,7 @@ int     c_worker_event_new_conn(void *ctx_arg, void *msg_arg);
 void    c_switch_thread_read(evutil_socket_t fd, short events, void *arg);
 void    c_accept(evutil_socket_t listener, short event, void *arg);
 void    c_app_accept(evutil_socket_t listener, short event, void *arg);
+void    c_aux_app_accept(evutil_socket_t listener, short event, void *arg);
 void    c_worker_ipc_read(evutil_socket_t listener, short event, void *arg);
 void    c_per_worker_timer_event(evutil_socket_t fd, short event, void *arg);
 void    c_switch_thread_write_event(evutil_socket_t fd, short events, void *arg);

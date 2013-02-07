@@ -57,11 +57,12 @@ CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(bindir)"
 PROGRAMS = $(bin_PROGRAMS)
 am_mull2sw_OBJECTS = l2switch.$(OBJEXT) mul_app_main.$(OBJEXT) \
-	mul_of_msg.$(OBJEXT)
+	mul_of_msg.$(OBJEXT) mul_service.$(OBJEXT)
 mull2sw_OBJECTS = $(am_mull2sw_OBJECTS)
 mull2sw_DEPENDENCIES = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a \
 	$(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
-	$(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a
+	$(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a \
+	$(top_srcdir)/services/loadable/topo_routing/./.libs/libmultr.a
 mull2sw_LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(mull2sw_LDFLAGS) \
 	$(LDFLAGS) -o $@
@@ -111,6 +112,7 @@ GAWK = @GAWK@
 GLIB_INCLUDE = @GLIB_INCLUDE@
 GREP = @GREP@
 HAVE_L2SW_MODULE = @HAVE_L2SW_MODULE@
+HAVE_LLDP_MODULE = @HAVE_LLDP_MODULE@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -203,18 +205,21 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 ACLOCAL_AMFLAGS = -I m4 ${ACLOCAL_FLAGS}
 pkgconfigdir = $(libdir)/pkgconfig
-INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
+INCLUDES = -I. -I$(top_srcdir)/mul -I$(top_srcdir)/common/ \
+	-I$(top_srcdir)/services/loadable/topo_routing/ \
 	-I$(top_srcdir)/common-libs/3rd-party/derived-lib/include/ \
 	-I$(top_srcdir)/common-libs/3rd-party/quagga-lib/include/ \
 	-I$(top_srcdir)/common-libs/mul-lib/include/ $(am__append_2) \
 	$(am__append_4)
 mull2sw_SOURCES = l2switch.c $(top_srcdir)/common/mul_app_main.c \
-               $(top_srcdir)/common/mul_of_msg.c
+               $(top_srcdir)/common/mul_of_msg.c \
+               $(top_srcdir)/common/mul_service.c
 
 LD_FLAGS = @LDFLAGS@ $(am__append_1) $(am__append_3)
 mull2sw_LDADD = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a  \
                 $(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
-                $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a 
+                $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a  \
+                $(top_srcdir)/services/loadable/topo_routing/./.libs/libmultr.a
 
 mull2sw_LDFLAGS = $(LD_FLAGS) -lpthread -lglib-2.0 -levent -lcrypt 
 noinst_HEADERS = l2switch.h
@@ -308,6 +313,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/l2switch.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mul_app_main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mul_of_msg.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mul_service.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -357,6 +363,20 @@ mul_of_msg.obj: $(top_srcdir)/common/mul_of_msg.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_of_msg.c' object='mul_of_msg.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_of_msg.obj `if test -f '$(top_srcdir)/common/mul_of_msg.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_of_msg.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_of_msg.c'; fi`
+
+mul_service.o: $(top_srcdir)/common/mul_service.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mul_service.o -MD -MP -MF $(DEPDIR)/mul_service.Tpo -c -o mul_service.o `test -f '$(top_srcdir)/common/mul_service.c' || echo '$(srcdir)/'`$(top_srcdir)/common/mul_service.c
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mul_service.Tpo $(DEPDIR)/mul_service.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_service.c' object='mul_service.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_service.o `test -f '$(top_srcdir)/common/mul_service.c' || echo '$(srcdir)/'`$(top_srcdir)/common/mul_service.c
+
+mul_service.obj: $(top_srcdir)/common/mul_service.c
+@am__fastdepCC_TRUE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT mul_service.obj -MD -MP -MF $(DEPDIR)/mul_service.Tpo -c -o mul_service.obj `if test -f '$(top_srcdir)/common/mul_service.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_service.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_service.c'; fi`
+@am__fastdepCC_TRUE@	$(am__mv) $(DEPDIR)/mul_service.Tpo $(DEPDIR)/mul_service.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$(top_srcdir)/common/mul_service.c' object='mul_service.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o mul_service.obj `if test -f '$(top_srcdir)/common/mul_service.c'; then $(CYGPATH_W) '$(top_srcdir)/common/mul_service.c'; else $(CYGPATH_W) '$(srcdir)/$(top_srcdir)/common/mul_service.c'; fi`
 
 mostlyclean-libtool:
 	-rm -f *.lo

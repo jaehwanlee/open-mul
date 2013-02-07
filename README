@@ -35,7 +35,7 @@
        use the following:
 
        > ./configure  --with-glib=`pwd`/common-libs/3rd-party/glib-2.32.0/ 
-         --with-libevent=`pwd`/common-libs/3rd-party/libevent-2.0.18-stable/ 
+         --with-libevent=`pwd`/common-libs/3rd-party/libevent-2.0.21-stable/ 
         
     b) If you build and install glib and libevent separately, we can simply use:
        > ./configure    ## Pass LDFLAGS and CFLAGS if these are installed in non-
@@ -53,7 +53,7 @@
 
    > make 
 
-4. Executable will be built as mul-core/mul
+4. Executable will be built as <top-mul-dir>/mul/mul
 
    - You need to run using sudo or as admin.
 
@@ -67,3 +67,16 @@
     > cd application/l2switch/
 
     Executable :  mull2sw
+
+    Same thing applies to other apps 
+
+6. How to run ?
+    
+    Mul provides an utility startup script for various use cases :  
+     
+    > cd <top-mul-dir>
+    > ./mul.sh start l2switch   ## Run in l2switch mode
+    
+    OR,
+
+    > ./mul.sh start fabric     ## Run in fabric 

@@ -55,6 +55,14 @@ c_per_sw_timer(void *arg_sw, void *arg_time)
         of_send_echo_request(sw);
     }
 
+    if (sw->capabilities & OFPC_FLOW_STATS) {
+        time_diff = time - sw->last_sample_time;
+
+        if (time_diff > TIME_uS(5)) {
+            of_per_switch_flow_stats_scan(sw, time);
+        }
+    }
+
     c_thread_sg_tx_sync(&sw->conn);
 }
 
@@ -222,7 +230,8 @@ c_app_thread_read(evutil_socket_t fd, short events UNUSED, void *arg)
                                       of_get_data_len, c_app_of_hdr_valid, 
                                       sizeof(struct ofp_header));
     if (c_recvd_sock_dead(ret)) {
-        c_log_err("Application socket dead");
+        c_log_err("%s Application socket dead", 
+                  app->app_flags & C_APP_AUX_REMOTE ?"Aux":"");
         perror("app-socket");
         app->app_conn.dead = 1;
         c_worker_do_app_del(app_ctx, app);
@@ -245,7 +254,8 @@ c_worker_do_app_del(struct c_app_ctx *c_app_ctx,
 
     t_data->app_list = g_slist_remove(t_data->app_list, app);
 
-    mul_unregister_app(app->app_name);
+    if (!(app->app_flags & C_APP_AUX_REMOTE)) 
+        mul_unregister_app(app->app_name);
 }
 
 void
@@ -273,7 +283,14 @@ c_worker_do_app_add(void *ctx_arg, void *msg_arg)
     struct c_app_ctx        *app_wrk_ctx  = ctx_arg;
     struct c_ipc_thread_msg *msg          = msg_arg;
     c_per_thread_dat_t      *t_data       = &app_wrk_ctx->thread_data;
-    c_app_info_t *app = NULL;
+    c_app_info_t            *app          = NULL;
+    struct sockaddr_in      peer_addr;
+    socklen_t               peer_sz       = sizeof(peer_addr);
+
+    if (getpeername(msg->new_conn_fd, (void *)&peer_addr, &peer_sz) < 0) {
+        c_log_err("%s:get peer failed", FN);
+        return -1;
+    }
 
     if (!(app = c_app_alloc(app_wrk_ctx))) {
         return -1;
@@ -282,15 +299,19 @@ c_worker_do_app_add(void *ctx_arg, void *msg_arg)
     app->app_conn.fd = msg->new_conn_fd;
     t_data->app_list = g_slist_append(t_data->app_list, app);
 
+    if (msg->aux_conn_valid && msg->aux_conn) {
+        c_aux_app_init(app);
+    }
+
     app->app_conn.rd_event = event_new(app_wrk_ctx->cmn_ctx.base,
-                                   msg->new_conn_fd,
-                                   EV_READ|EV_PERSIST,
-                                   c_app_thread_read, app);
+                                       msg->new_conn_fd,
+                                       EV_READ|EV_PERSIST,
+                                       c_app_thread_read, app);
     app->app_conn.wr_event = event_new(app_wrk_ctx->cmn_ctx.base,
                                        msg->new_conn_fd,
                                        EV_WRITE, //|EV_PERSIST,
-                                       c_thread_write_event, &app->app_conn);
-
+                                       c_thread_write_event, 
+                                       &app->app_conn);
     event_add(C_EVENT(app->app_conn.rd_event), NULL);
 
     return 0;
@@ -322,6 +343,7 @@ c_worker_do_switch_add(void *ctx_arg, void *msg_arg)
 
     t_data->sw_list = g_slist_append(t_data->sw_list, new_switch);
 
+    new_switch->c_hdl = c_wrk_ctx->cmn_ctx.c_hdl;
     new_switch->conn.fd =  msg->new_conn_fd;
     snprintf(new_switch->conn.conn_str, C_CONN_DESC_SZ -1, "%s:%d", 
              inet_ntoa(peer_addr.sin_addr), ntohs(peer_addr.sin_port));
@@ -358,7 +380,7 @@ c_worker_event_new_conn(void *ctx_arg, void *msg_arg)
 
 static int
 c_new_conn_to_thread(struct c_main_ctx *m_ctx, int new_conn_fd,
-                     bool sw_conn)
+                     bool sw_conn, bool aux_conn)
 {
     struct c_ipc_hdr        *ipc_hdr;
     struct c_ipc_thread_msg *ipc_t_msg;
@@ -381,6 +403,10 @@ c_new_conn_to_thread(struct c_main_ctx *m_ctx, int new_conn_fd,
         /* Application connection */
         thread_idx = c_get_new_app_worker(m_ctx);
         ipc_wr_fd  = c_tid_to_app_ipc_wr_fd(m_ctx, thread_idx);
+        if (aux_conn) {
+            ipc_t_msg->aux_conn = 1;
+            ipc_t_msg->aux_conn_valid = 1;
+        }
     }
 
     return c_send_unicast_ipc_msg(ipc_wr_fd, ipc_hdr); 
@@ -400,9 +426,9 @@ c_accept(evutil_socket_t listener, short event UNUSED, void *arg)
         close(fd);
     } else {
         c_make_socket_nonblocking(fd);
-        c_sock_set_recvbuf(fd, 3*1024*1024);
+        /* c_sock_set_recvbuf(fd, 3*1024*1024); */
         c_tcpsock_set_nodelay(fd);
-        c_new_conn_to_thread(m_ctx, fd, true);
+        c_new_conn_to_thread(m_ctx, fd, true, false);
     }
 }
 
@@ -422,7 +448,28 @@ c_app_accept(evutil_socket_t listener, short event UNUSED, void *arg)
         close(fd);
     } else {
         c_make_socket_nonblocking(fd);
-        c_sock_set_recvbuf(fd, 384 *1024);
-        c_new_conn_to_thread(m_ctx, fd, false);
+        /* c_sock_set_recvbuf(fd, 384 *1024); */
+        c_new_conn_to_thread(m_ctx, fd, false, false);
+    }
+}
+
+void
+c_aux_app_accept(evutil_socket_t listener, short event UNUSED, void *arg)
+{
+    struct c_main_ctx       *m_ctx = arg;
+    struct sockaddr_storage ss;
+    socklen_t               slen = sizeof(ss);
+    int fd                  = accept(listener, (struct sockaddr*)&ss, &slen);
+
+    c_log_debug("in app accept aux thread");
+
+    if (fd < 0) {
+        perror("accept");
+    } else if (fd > FD_SETSIZE) {
+        close(fd);
+    } else {
+        c_make_socket_nonblocking(fd);
+        /* c_sock_set_recvbuf(fd, 384 *1024); */
+        c_new_conn_to_thread(m_ctx, fd, false, true);
     }
 }

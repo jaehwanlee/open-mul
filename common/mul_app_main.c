@@ -19,6 +19,18 @@
 #include "mul_common.h"
 #include "mul_vty.h"
 #include "mul_app_main.h"
+#include "mul_services.h"
+
+struct c_app_service {
+   char service_name[MAX_SERV_NAME_LEN];
+   uint16_t  port;
+   void * (*service_priv_init)(void); 
+}c_app_service_tbl[] = {
+    { MUL_TR_SERVICE_NAME, MUL_TR_SERVICE_PORT, NULL },    
+    { MUL_ROUTE_SERVICE_NAME, 0, mul_route_service_get },
+    { MUL_CORE_SERVICE_NAME, C_AUX_APP_PORT, NULL },
+    { MUL_FAB_CLI_SERVICE_NAME, MUL_FAB_CLI_PORT, NULL }
+};
 
 static int c_app_sock_init(c_app_hdl_t *hdl, char *server);
 
@@ -133,6 +145,7 @@ c_app_reconn_timer(evutil_socket_t fd UNUSED, short event UNUSED,
         c_log_debug("Connection to controller restored");
         event_del((struct event *)(hdl->reconn_timer_event));
         event_free((struct event *)(hdl->reconn_timer_event));
+        hdl->conn.dead = 0;
         c_app_notify_reconnect(hdl);
         return;
     }
@@ -277,11 +290,10 @@ mul_app_send_pkt_out(void *arg UNUSED, uint64_t dpid, void *parms_arg)
     return;
 }
 
-int
-mul_app_send_flow_add(void *app_name UNUSED, void *sw_arg UNUSED,
-                      uint64_t dpid, struct flow *fl, uint32_t buffer_id,
-                      void *actions, size_t action_len, uint16_t itimeo, 
-                      uint16_t htimeo, uint32_t wildcards, uint16_t prio, 
+static struct cbuf *
+mul_app_prep_flow_add(uint64_t dpid, struct flow *fl, uint32_t buffer_id,
+                      void *actions, size_t action_len, uint16_t itimeo,
+                      uint16_t htimeo, uint32_t wildcards, uint16_t prio,
                       uint8_t flags)
 {
     c_ofp_flow_mod_t            *cofp_fm;
@@ -294,7 +306,11 @@ mul_app_send_flow_add(void *app_name UNUSED, void *sw_arg UNUSED,
     b = of_prep_msg(tot_len, C_OFPT_FLOW_MOD, 0);
 
     cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
+    if (flags & C_FL_ENT_SWALIAS) {
+        cofp_fm->sw_alias = htonl((uint32_t)dpid);
+    } else {
+        cofp_fm->datapath_id = htonll(dpid);
+    }
     cofp_fm->command = C_OFPC_ADD;
     cofp_fm->flags = flags;
     memcpy(&cofp_fm->flow, fl, sizeof(*fl));
@@ -308,16 +324,46 @@ mul_app_send_flow_add(void *app_name UNUSED, void *sw_arg UNUSED,
     act = (void *)(cofp_fm+1);
     memcpy(act, actions, action_len);
 
+    return b;
+}
+
+int
+mul_app_send_flow_add(void *app_name UNUSED, void *sw_arg UNUSED,
+                      uint64_t dpid, struct flow *fl, uint32_t buffer_id,
+                      void *actions, size_t action_len, uint16_t itimeo, 
+                      uint16_t htimeo, uint32_t wildcards, uint16_t prio, 
+                      uint8_t flags)
+{
+    struct cbuf                 *b;
+
+    b = mul_app_prep_flow_add(dpid, fl, buffer_id, actions, action_len,
+                              itimeo, htimeo, wildcards, prio, flags);
     mul_app_command_handler(NULL, b);
 
     return 0;
 }
 
 int
-mul_app_send_flow_del(void *app_name UNUSED, void *sw_arg UNUSED, 
-                      uint64_t dpid, struct flow *fl,
-                      uint32_t wildcards, uint16_t oport, 
-                      uint8_t flags)
+mul_service_send_flow_add(void *service,
+                          uint64_t dpid, struct flow *fl, uint32_t buffer_id,
+                          void *actions, size_t action_len, uint16_t itimeo, 
+                          uint16_t htimeo, uint32_t wildcards, uint16_t prio, 
+                          uint8_t flags)
+{
+    struct cbuf                 *b;
+
+    b = mul_app_prep_flow_add(dpid, fl, buffer_id, actions, action_len,
+                              itimeo, htimeo, wildcards, prio, flags);
+    c_service_send(service, b);
+
+    return 0;
+}
+
+
+static struct cbuf *
+mul_app_prep_flow_del(uint64_t dpid, struct flow *fl,
+                      uint32_t wildcards, uint16_t oport,
+                      uint16_t prio, uint8_t flags)
 {
     c_ofp_flow_mod_t            *cofp_fm;
     struct cbuf                 *b;
@@ -328,17 +374,51 @@ mul_app_send_flow_del(void *app_name UNUSED, void *sw_arg UNUSED,
     b = of_prep_msg(tot_len, C_OFPT_FLOW_MOD, 0);
 
     cofp_fm = (void *)(b->data);
-    cofp_fm->datapath_id = htonll(dpid);
+    if (flags & C_FL_ENT_SWALIAS) {
+        cofp_fm->sw_alias = htonl((uint32_t)dpid);
+    } else {
+        cofp_fm->datapath_id = htonll(dpid);
+    }
     cofp_fm->command = C_OFPC_DEL;
+    cofp_fm->priority = htons(prio);
     cofp_fm->flags = flags;
     memcpy(&cofp_fm->flow, fl, sizeof(*fl));
     cofp_fm->wildcards = htonl(wildcards);
     cofp_fm->oport = htons(oport);
 
+    return b;
+}
+
+int
+mul_app_send_flow_del(void *app_name UNUSED, void *sw_arg UNUSED, 
+                      uint64_t dpid, struct flow *fl,
+                      uint32_t wildcards, uint16_t oport, 
+                      uint16_t prio, uint8_t flags)
+{
+    struct cbuf                 *b;
+
+    b = mul_app_prep_flow_del(dpid, fl, wildcards, oport, prio, flags);
+
     mul_app_command_handler(NULL, b);
 
     return 0;
 }
+
+int
+mul_service_send_flow_del(void *service, 
+                      uint64_t dpid, struct flow *fl,
+                      uint32_t wildcards, uint16_t oport, 
+                      uint16_t prio, uint8_t flags)
+{
+    struct cbuf                 *b;
+
+    b = mul_app_prep_flow_del(dpid, fl, wildcards, oport, prio, flags);
+    c_service_send(service, b);
+
+    return 0;
+}
+
+
 
 static int 
 c_app_init(c_app_hdl_t *hdl)
@@ -371,6 +451,77 @@ c_app_sock_init(c_app_hdl_t *hdl, char *server)
     event_add((struct event *)(hdl->conn.rd_event), NULL);
 
     return 0;
+}
+
+void *
+mul_app_create_service(char *name,  
+                       void (*service_handler)(void *service, struct cbuf *msg))
+{
+    size_t serv_sz = sizeof(c_app_service_tbl)/sizeof(c_app_service_tbl[0]);
+    int serv_id = 0;
+    struct c_app_service *serv;
+
+    for (; serv_id < serv_sz; serv_id++) {
+        serv = &c_app_service_tbl[serv_id];
+        if (!strncmp(serv->service_name, name, MAX_SERV_NAME_LEN-1)) {
+            return mul_service_start(c_app_main_hdl.base, name, serv->port, 
+                                     service_handler);
+        }
+    }
+
+    c_log_err("%s service unknown", name);
+    return NULL;
+}
+
+static void *
+__mul_app_get_service(char *name,
+                      void (*conn_update)(void *service,
+                                          unsigned char conn_event),
+                      bool retry_conn)
+{
+    size_t serv_sz = sizeof(c_app_service_tbl)/sizeof(c_app_service_tbl[0]);
+    int serv_id = 0;
+    struct c_app_service *serv_elem;
+    mul_service_t *service;
+
+    for (; serv_id < serv_sz; serv_id++) {
+        serv_elem = &c_app_service_tbl[serv_id];
+        if (!strncmp(serv_elem->service_name, name, MAX_SERV_NAME_LEN-1)) {
+            if (serv_elem->service_priv_init) 
+                service = serv_elem->service_priv_init();
+            else 
+                service = mul_service_instantiate(c_app_main_hdl.base, name, 
+                                                  serv_elem->port,
+                                                  conn_update,
+                                                  retry_conn);
+            return service;
+        }
+    }
+
+    c_log_err("%s service unknown", name);
+    return NULL;
+}
+
+void *
+mul_app_get_service(char *name)
+{
+    return __mul_app_get_service(name, NULL, false);
+}
+ 
+void *
+mul_app_get_service_notify(char *name,
+                          void (*conn_update)(void *service,
+                                              unsigned char conn_event),
+                          bool retry_conn)
+{
+    return __mul_app_get_service(name, conn_update, retry_conn);
+}
+ 
+
+void
+mul_app_destroy_service(void *service)
+{
+    return mul_service_destroy(service);
 }
 
 static void
@@ -425,7 +576,7 @@ c_app_vty_main(void *arg)
     install_element(ENABLE_NODE, &show_app_version_cmd);
     sort_node();
 
-    vty_serv_sock(NULL, hdl->vty_port, app_vtysh_path);
+    vty_serv_sock(NULL, hdl->vty_port, app_vtysh_path, 1);
 
     c_log_debug(" App vty thread running \n");
     
@@ -482,7 +633,7 @@ main(int argc, char **argv)
     }
 
     if (daemon_mode) {
-        c_daemon(0, 0);
+        c_daemon(1, 0);
     }
 
     clog_default = openclog (c_app_main_hdl.progname, CLOG_MUL,

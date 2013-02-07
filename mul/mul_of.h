@@ -67,6 +67,7 @@ void            of_switch_recv_msg(void *sw_arg, struct cbuf *b);
 void            of_switch_add(c_switch_t *sw);
 void            of_switch_del(c_switch_t *sw);
 void            of_switch_flow_tbl_delete(c_switch_t *sw);
+void            of_switch_flow_tbl_reset(c_switch_t *sw);
 int             of_flow_extract(uint8_t *pkt, struct flow *flow,
                             uint16_t in_port, size_t pkt_len);
 void            of_flow_entry_put(c_fl_entry_t *ent);
@@ -84,16 +85,27 @@ int             __of_send_flow_add_nocache(c_switch_t *sw, struct flow *fl,
                             uint16_t htimeo, uint32_t wildcards, uint16_t prio);
 int             __of_send_flow_del_nocache(c_switch_t *sw, struct flow *fl,
                              uint32_t wildcards, uint16_t oport, bool strict);
+int             of_send_flow_stat_req(c_switch_t *sw, const struct flow *flow,
+                             uint32_t wildcards, uint8_t tbl_id, uint16_t oport);
+int             __of_send_flow_stat_req(c_switch_t *sw, const struct flow *flow,
+                             uint32_t wildcards, uint8_t tbl_id, uint16_t oport);
+void            of_per_switch_flow_stats_scan(c_switch_t *sw, uint64_t curr_time);
 char            *of_dump_flow_all(struct flow *fl);
 char            *of_dump_flow(struct flow *fl, uint32_t wildcards);
 char            *of_dump_fl_app(c_fl_entry_t *ent);
 typedef         void (*flow_parser_fn)(void *arg, c_fl_entry_t *ent); 
 void            of_flow_traverse_tbl_all(c_switch_t *sw, void *u_arg, flow_parser_fn fn);
 void            __of_per_switch_del_app_flow_ownership(c_switch_t *sw, void *app);
+int             __of_flow_find_app_ownership(void *key_arg UNUSED, void *ent_arg, void *app);
 void            *of_switch_alloc(void *ctx);
 c_switch_t      *of_switch_get(ctrl_hdl_t *ctrl, uint64_t dpid);
+c_switch_t      *of_switch_alias_get(ctrl_hdl_t *ctrl, int alias);
 c_switch_t      *__of_switch_get(ctrl_hdl_t *ctrl, uint64_t dpid);
 void            of_switch_put(c_switch_t *sw);
+void            of_switch_brief_info(c_switch_t *sw,
+                                     struct c_ofp_switch_brief *cofp_sb);
+void            of_switch_detail_info(c_switch_t *sw,
+                                      struct ofp_switch_features *osf);
 void            of_switch_traverse_all(ctrl_hdl_t *hdl, GHFunc dump_fn, void *arg);
 void            __of_switch_traverse_all(ctrl_hdl_t *hdl, GHFunc dump_fn, void *arg);
 int             of_dfl_fwd(struct c_switch *sw, struct cbuf *b, void *data,

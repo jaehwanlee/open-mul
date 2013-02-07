@@ -9,7 +9,8 @@ LIB_EVENT = @LIB_EVENT@
 GLIB_INCLUDE = @GLIB_INCLUDE@
 LIBEVENT_INCLUDE = @LIBEVENT_INCLUDE@
 
-INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
+INCLUDES = -I. -I$(top_srcdir)/mul -I$(top_srcdir)/common/ \
+           -I$(top_srcdir)/services/loadable/topo_routing/ \
            -I$(top_srcdir)/common-libs/3rd-party/derived-lib/include/ \
            -I$(top_srcdir)/common-libs/3rd-party/quagga-lib/include/ \
            -I$(top_srcdir)/common-libs/mul-lib/include/
@@ -17,7 +18,8 @@ INCLUDES = -I. -I$(top_srcdir) -I$(top_srcdir)/common/ \
 DEFS = @DEFS@ -DSYSCONFDIR=\"$(sysconfdir)/\"
 
 mull2sw_SOURCES = l2switch.c $(top_srcdir)/common/mul_app_main.c \
-               $(top_srcdir)/common/mul_of_msg.c
+               $(top_srcdir)/common/mul_of_msg.c \
+               $(top_srcdir)/common/mul_service.c
 
 LD_FLAGS= @LDFLAGS@ 
 
@@ -33,7 +35,8 @@ endif
 
 mull2sw_LDADD = $(top_srcdir)/common-libs/3rd-party/derived-lib/.libs/libutil.a  \
                 $(top_srcdir)/common-libs/3rd-party/quagga-lib/.libs/libzebra.a \
-                $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a 
+                $(top_srcdir)/common-libs/mul-lib/.libs/libmulutil.a  \
+                $(top_srcdir)/services/loadable/topo_routing/./.libs/libmultr.a
 
 mull2sw_LDFLAGS = $(LD_FLAGS) -lpthread -lglib-2.0 -levent -lcrypt 
 
