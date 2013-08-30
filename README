@@ -31,17 +31,20 @@
 
 2. Configure MuL 
 
-    a) If you used built-in script to download core packages, then one can 
+    a) Run :
+        > ./autogen.sh
+
+    b) If you used built-in script to download core packages, then one can 
        use the following:
 
        > ./configure  --with-glib=`pwd`/common-libs/3rd-party/glib-2.32.0/ 
          --with-libevent=`pwd`/common-libs/3rd-party/libevent-2.0.21-stable/ 
         
-    b) If you build and install glib and libevent separately, we can simply use:
+    c) If you build and install glib and libevent separately, we can simply use:
        > ./configure    ## Pass LDFLAGS and CFLAGS if these are installed in non-
                         ## standard directories.
 
-    c) configure script options :
+    d) configure script options :
 
        > --with-l2sw=y  ## Build l2sw module as a separate process (default)
 
