@@ -29,7 +29,7 @@
 
 int mul_fabric_host_mod(void *service, uint64_t dpid, struct flow *fl, bool add);
 void mul_fabric_show_hosts(void *service, bool active, bool dump_cmd,
-                           void *arg, void (*cb_fn)(void *arg, char *pbuf));
+                           void *arg, void (*cb_fn)(void *arg, void *pbuf));
 void mul_fabric_show_routes(void *service,
                        void *arg,
                        void (*show_src_host)(void *arg, char *pbuf),

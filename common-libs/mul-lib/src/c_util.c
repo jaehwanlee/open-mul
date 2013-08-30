@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <assert.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -221,9 +222,8 @@ c_server_socket_create_blocking(uint32_t server_ip, uint16_t port)
 }
 
 
-
 int
-c_client_socket_create(char *server_ip, uint16_t port)
+c_client_socket_create(const char *server_ip, uint16_t port)
 {
     struct sockaddr_in sin;
     int                fd;
@@ -243,7 +243,7 @@ c_client_socket_create(char *server_ip, uint16_t port)
 
     memset(sin.sin_zero, 0, sizeof sin.sin_zero);
     if (connect(fd, (struct sockaddr *)&sin, sizeof(struct sockaddr)) == -1) {
-        perror("connect");
+        close(fd);
         return -1;
     }
 
@@ -255,7 +255,7 @@ c_client_socket_create(char *server_ip, uint16_t port)
 
 
 int 
-c_client_socket_create_blocking(char *server_ip, uint16_t port)
+c_client_socket_create_blocking(const char *server_ip, uint16_t port)
 {   
     struct sockaddr_in sin;
     int                fd;
@@ -274,7 +274,7 @@ c_client_socket_create_blocking(char *server_ip, uint16_t port)
         
     memset(sin.sin_zero, 0, sizeof sin.sin_zero);
     if (connect(fd, (struct sockaddr *)&sin, sizeof(struct sockaddr)) == -1) {
-        perror("connect");
+        close(fd);
         return -1;
     }
 
@@ -300,6 +300,13 @@ c_sock_set_recvbuf (int fd, size_t size)
 {
   return setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof (size));
 }
+
+int 
+c_sock_set_sndbuf (int fd, size_t size)
+{
+  return setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof (size));
+}
+
 
 int c_tcpsock_set_nodelay(int fd)
 {
@@ -413,7 +420,6 @@ c_socket_write_nonblock_loop(c_conn_t *conn,
     }
 
     while ((buf = cbuf_list_dequeue(&conn->tx_q))) {
-
         sent_sz = send(conn->fd, buf->data, buf->len, MSG_NOSIGNAL);
         if (sent_sz <= 0) {
             cbuf_list_queue(&conn->tx_q, buf);
@@ -438,14 +444,17 @@ c_socket_write_nonblock_loop(c_conn_t *conn,
     }
 
 out:
+    if (cbuf_list_queue_len(&conn->tx_q)) {
+        cbuf_list_rm_inline_bufs(&conn->tx_q);
+    }
     return err;
 
 sched_tx_event:
+    cbuf_list_rm_inline_bufs(&conn->tx_q);
     sched_tx(conn);
     return err;
 
 }
-
 
 int 
 c_socket_write_nonblock_sg_loop(c_conn_t *conn,
@@ -499,9 +508,14 @@ c_socket_write_nonblock_sg_loop(c_conn_t *conn,
     }
 
 out:
+    if (cbuf_list_queue_len(&conn->tx_q)) {
+        cbuf_list_rm_inline_bufs(&conn->tx_q);
+    } 
+
     return err;
 
 sched_tx_event:
+    cbuf_list_rm_inline_bufs(&conn->tx_q);
     sched_tx(conn);
     return err;
 }

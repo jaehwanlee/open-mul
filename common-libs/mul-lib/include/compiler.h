@@ -47,5 +47,7 @@
 
 #define FETCH_ALWAYS(x) (*(volatile typeof(x) *)&(x))
 
+#define NOT_REACHED() assert(0)
+
 
 #endif

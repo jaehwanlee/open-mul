@@ -604,9 +604,11 @@ lldp_switch_add(void *app_arg, c_ofp_switch_add_t *ofp_sa)
 
     c_wr_unlock(&topo_hdl->switch_lock);
 
+#if 0
     /* Clear all entries for this switch */
     mul_app_send_flow_del(MUL_TR_SERVICE_NAME, NULL, dpid, &fl,
                           OFPFW_ALL, OFPP_NONE, 0, C_FL_ENT_NOCACHE);
+#endif
 
     /* Add Flow to receive LLDP Packet type */
     memset(&fl, 0, sizeof(fl));

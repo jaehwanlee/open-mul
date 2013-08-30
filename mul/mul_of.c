@@ -19,10 +19,12 @@
 
 #include "mul.h"
 
-static void of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, uint32_t buffer_id);
+static void of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, 
+                             uint32_t buffer_id, bool ha_sync);
 static void of_send_flow_del(c_switch_t *sw, c_fl_entry_t *ent,
                              uint16_t oport, bool strict);
-static void of_send_flow_del_strict(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport);
+static void of_send_flow_del_strict(c_switch_t *sw, c_fl_entry_t *ent,
+                                    uint16_t oport);
 static c_fl_entry_t *__of_flow_get_exm(c_switch_t *sw, struct flow *fl);
 static void of_flow_rule_free(void *arg, void *u_arg);
 
@@ -50,6 +52,31 @@ of_exm_flow_mod_validate_parms(struct of_flow_mod_params *fl_parms)
     }
 
     return 0;
+}
+
+static inline void
+c_switch_tx(c_switch_t *sw, struct cbuf *b, bool only_q)
+{
+    if (c_switch_is_virtual(sw)) {
+        free_cbuf(b);
+        return;
+    } 
+
+    c_thread_tx(&sw->conn, b, only_q);
+}
+
+static inline void
+c_switch_chain_tx(c_switch_t *sw, struct cbuf **b, size_t nbufs)
+{
+    int n = 0;
+    if (c_switch_is_virtual(sw)) {
+        for (n = 0; n < nbufs; n++) {
+            free_cbuf(b[n]);
+        }
+        return;
+    } 
+
+    c_thread_chain_tx(&sw->conn, b, nbufs);
 }
 
 static void
@@ -122,8 +149,88 @@ of_dump_fl_app(c_fl_entry_t *ent)
     return pbuf;
 }
 
+bool
+of_switch_port_valid(c_switch_t *sw, uint16_t port, uint32_t wc)
+{
+    if (!(ntohl(wc) & OFPFW_IN_PORT)) {
+        return __c_switch_port_valid(sw, port);
+    }
+
+    return true;
+}
+
+int
+of_validate_actions_strict(c_switch_t *sw, void *actions, size_t action_len)
+{
+    size_t                   parsed_len = 0;
+    uint16_t                 act_type;
+    struct ofp_action_header *hdr;
+
+    while (action_len) {
+        hdr =  (struct ofp_action_header *)actions;
+        act_type = ntohs(hdr->type);
+        switch (act_type) {
+        case OFPAT_OUTPUT:
+            {
+                struct ofp_action_output *op_act = (void *)hdr;
+                if(!ntohs(op_act->port) ||
+                   !__c_switch_port_valid(sw, ntohs(op_act->port))) {
+                    c_log_err("%s: port 0x%x", FN, ntohs(op_act->port));
+                    return -1;
+                }
+                parsed_len = sizeof(*op_act);
+                break;
+            }
+        case OFPAT_SET_VLAN_VID:
+            {
+                struct ofp_action_vlan_vid *vid_act = (void *)hdr;    
+                parsed_len = sizeof(*vid_act);
+                break;
+                                 
+            } 
+        case OFPAT_SET_DL_DST:
+        case OFPAT_SET_DL_SRC:
+            {
+                struct ofp_action_dl_addr *mac_act = (void *)hdr;
+                parsed_len = sizeof(*mac_act);
+                break;
+            }
+        case OFPAT_SET_VLAN_PCP:
+            {
+                struct ofp_action_vlan_pcp *vpcp_act = (void *)hdr;
+                parsed_len = sizeof(*vpcp_act);
+                break;
+
+            }
+        case OFPAT_STRIP_VLAN:
+            {
+                struct ofp_action_header *strip_vlan_act UNUSED = (void *)hdr;
+                parsed_len = sizeof(*strip_vlan_act);
+                break;
+            }
+        case OFPAT_SET_NW_SRC:
+        case OFPAT_SET_NW_DST:
+            {
+                struct ofp_action_nw_addr *nw_addr_act = (void *)hdr;
+                parsed_len = sizeof(*nw_addr_act);
+                break;
+            }
+        default:
+            {
+                c_log_err("%s:unhandled action %u", FN, act_type);
+                return -1;
+            }
+        }
+
+        action_len -= parsed_len;
+        actions = ((uint8_t *)actions + parsed_len);
+    }
+
+    return 0;
+}
+
 static unsigned int
-of_switch_hash_key (const void *p)
+of_switch_hash_key(const void *p)
 {
     c_switch_t *sw = (c_switch_t *) p;
 
@@ -131,7 +238,7 @@ of_switch_hash_key (const void *p)
 }
 
 static int 
-of_switch_hash_cmp (const void *p1, const void *p2)
+of_switch_hash_cmp(const void *p1, const void *p2)
 {
     const c_switch_t *sw1 = (c_switch_t *) p1;
     const c_switch_t *sw2 = (c_switch_t *) p2;
@@ -148,11 +255,19 @@ of_switch_add(c_switch_t *sw)
 {
     struct c_cmn_ctx *cmn_ctx = sw->ctx;
     ctrl_hdl_t *ctrl          = cmn_ctx->c_hdl; 
+    c_switch_t *old_sw;
 
     c_wr_lock(&ctrl->lock);
     if (!ctrl->sw_hash_tbl) {
         ctrl->sw_hash_tbl = g_hash_table_new(of_switch_hash_key, 
                                              of_switch_hash_cmp);
+    } else {
+        if ((old_sw =__of_switch_get(ctrl, sw->DPID))) {
+            c_log_err("%s: switch 0x%llx exists", FN, sw->DPID);
+            of_switch_put(old_sw);
+            c_wr_unlock(&ctrl->lock);
+            return;
+        }
     }
 
     g_hash_table_add(ctrl->sw_hash_tbl, sw);
@@ -163,6 +278,20 @@ of_switch_add(c_switch_t *sw)
 
     c_wr_unlock(&ctrl->lock);
 
+}
+
+static int 
+of_switch_clone_on_conn(c_switch_t *sw, c_switch_t *old_sw)
+{
+    if (old_sw == sw) {
+        return SW_CLONE_USE;
+    }
+
+    if (!(old_sw->switch_state & SW_DEAD)) {
+        return SW_CLONE_DENY;
+    }
+
+    return SW_CLONE_OLD;
 }
 
 void
@@ -177,7 +306,8 @@ of_switch_del(c_switch_t *sw)
     }
 
     if (ctrl->sw_ipool) {
-        ipool_put(ctrl->sw_ipool, sw->alias_id);
+        if (sw->switch_state & SW_REGISTERED)
+            ipool_put(ctrl->sw_ipool, sw->alias_id);
     }
     c_wr_unlock(&ctrl->lock);
 
@@ -186,8 +316,17 @@ of_switch_del(c_switch_t *sw)
         sw->conn.cbuf = NULL;
     }
 
-    sw->switch_state = SW_DEAD;
-    c_signal_app_event(sw, NULL, C_DP_UNREG, NULL, NULL);
+    if (sw->switch_state & SW_REGISTERED)
+        c_signal_app_event(sw, NULL, C_DP_UNREG, NULL, NULL);
+
+    sw->switch_state |= SW_DEAD;
+}
+
+void
+of_switch_mark_sticky_del(c_switch_t *sw)
+{
+    sw->last_refresh_time = time(NULL);
+    sw->switch_state |= SW_DEAD;
 }
 
 void *
@@ -200,7 +339,7 @@ of_switch_alloc(void *ctx)
 
     new_switch->switch_state = SW_INIT;
     new_switch->ctx = ctx;
-    new_switch->last_refresh_time = g_get_monotonic_time();
+    new_switch->last_refresh_time = time(NULL);
     c_rw_lock_init(&new_switch->lock);
     c_rw_lock_init(&new_switch->conn.conn_lock);
     cbuf_list_head_init(&new_switch->conn.tx_q);
@@ -213,6 +352,10 @@ of_switch_get(ctrl_hdl_t *ctrl, uint64_t dpid)
 {
     c_switch_t       key, *sw = NULL; 
     unsigned int     found;
+
+    if (!ctrl->sw_hash_tbl) {
+        return NULL;
+    }
 
     key.datapath_id = dpid;
 
@@ -272,9 +415,7 @@ of_switch_put(c_switch_t *sw)
 {
     if (atomic_read(&sw->ref) == 0){
         c_log_debug("sw (0x:%llx) freed", sw->DPID);
-        cbuf_list_purge(&sw->conn.tx_q);
         of_switch_flow_tbl_delete(sw);
-
         if (sw->fp_ops.fp_db_dtor) {
             sw->fp_ops.fp_db_dtor(sw);
         }
@@ -607,7 +748,7 @@ of_flow_exm_add(c_switch_t *sw, struct of_flow_mod_params *fl_parms)
     c_wr_unlock(&sw->lock);
 
     if (need_hw_sync) {
-        of_send_flow_add(sw, new_ent, fl_parms->buffer_id);
+        of_send_flow_add(sw, new_ent, fl_parms->buffer_id, true);
     }
 
     of_flow_entry_put(new_ent);
@@ -756,6 +897,61 @@ __of_flow_lookup_rule_strict(GSList *list, struct flow *fl, uint32_t wildcards)
 }
 
 static c_fl_entry_t * 
+__of_flow_lookup_rule_strict_prio_hint_detail(c_switch_t *sw UNUSED, GSList **list,
+                                       struct flow *fl, uint32_t wildcards,
+                                       uint16_t prio)
+{
+    GSList *iterator = NULL, *hint = NULL;
+    c_fl_entry_t *ent;
+    struct flow *ent_fl;
+    uint32_t fl_wildcards, ip_wc;
+    uint32_t nw_dst_mask, nw_src_mask;
+
+    for (iterator = *list; iterator; iterator = iterator->next) {
+        ent = iterator->data;
+        if ((hint && ((c_fl_entry_t *)(hint->data))->FL_PRIO > ent->FL_PRIO) ||
+            (prio >= ent->FL_PRIO)) {
+            hint = iterator;
+        }
+
+        fl_wildcards = ntohl(ent->FL_WILDCARDS);
+        if (ent->FL_WILDCARDS != wildcards) continue;
+
+        fl_wildcards = ntohl(ent->FL_WILDCARDS);
+        ent_fl = &ent->fl;
+
+        ip_wc = ((fl_wildcards & OFPFW_NW_DST_MASK) >> OFPFW_NW_DST_SHIFT);
+        nw_dst_mask = ip_wc >= 32 ? 0 :
+                                    make_inet_mask(32-ip_wc);
+
+        ip_wc = ((fl_wildcards & OFPFW_NW_SRC_MASK) >> OFPFW_NW_SRC_SHIFT);
+        nw_src_mask = ip_wc >= 32 ? 0 :
+                                    make_inet_mask(32-ip_wc);
+
+        if ((fl->nw_dst & htonl(nw_dst_mask)) == ent_fl->nw_dst &&
+            (fl->nw_src & htonl(nw_src_mask)) == ent_fl->nw_src &&
+            (fl_wildcards & OFPFW_NW_PROTO || fl->nw_proto == ent_fl->nw_proto) &&
+            (fl_wildcards & OFPFW_NW_TOS || fl->nw_tos == ent_fl->nw_tos) &&
+            (fl_wildcards & OFPFW_TP_DST || fl->tp_dst == ent_fl->tp_dst) &&
+            (fl_wildcards & OFPFW_TP_SRC || fl->tp_src == ent_fl->tp_src) &&
+            (fl_wildcards & OFPFW_DL_SRC || !memcmp(fl->dl_src, ent_fl->dl_src, 6)) &&
+            (fl_wildcards & OFPFW_DL_DST || !memcmp(fl->dl_dst, ent_fl->dl_dst, 6)) &&
+            (fl_wildcards & OFPFW_DL_TYPE || fl->dl_type == ent_fl->dl_type) &&
+            (fl_wildcards & OFPFW_DL_VLAN || fl->dl_vlan == ent_fl->dl_vlan) &&
+            (fl_wildcards & OFPFW_DL_VLAN_PCP || fl->dl_vlan_pcp == ent_fl->dl_vlan_pcp) &&
+            (fl_wildcards & OFPFW_IN_PORT || fl->in_port == ent_fl->in_port) &&
+            ent->FL_PRIO == prio)  {
+            *list = hint;
+            return ent;
+        }
+    }
+
+    *list = hint;
+    return NULL;
+}
+
+
+static c_fl_entry_t *
 __of_flow_lookup_rule_strict_prio_hint(GSList **list, struct flow *fl, uint32_t wildcards,
                                        uint16_t prio)
 {
@@ -970,7 +1166,7 @@ of_flow_rule_add(c_switch_t *sw, struct of_flow_mod_params *fl_parms)
     c_wr_unlock(&sw->lock);
 
     if (hw_sync) {
-        of_send_flow_add(sw, new_ent, fl_parms->buffer_id);
+        of_send_flow_add(sw, new_ent, fl_parms->buffer_id, true);
         of_flow_entry_put(new_ent);
     }
 
@@ -1095,6 +1291,37 @@ of_flow_del(c_switch_t *sw, struct of_flow_mod_params *fl_parms)
 #endif
 }
 
+
+static void
+c_per_flow_resync_hw(void *arg UNUSED, c_fl_entry_t *ent)
+{
+    if (ent->FL_FLAGS & C_FL_ENT_NOSYNC ||  ent->FL_FLAGS & C_FL_ENT_CLONE ||
+        ent->FL_FLAGS & C_FL_ENT_LOCAL ) {
+        return;
+    }
+
+    of_send_flow_add(ent->sw, ent, 0xffffffff, false);
+}
+
+void
+c_per_switch_flow_resync_hw(void *k, void *v UNUSED, void *arg)
+{
+    c_switch_t  *sw = k;
+
+    c_log_info("%s: Resync of-flows switch 0x%llx", FN, sw->DPID);
+    c_rd_lock(&sw->lock);
+    of_flow_traverse_tbl_all(sw, arg, c_per_flow_resync_hw);
+    c_rd_unlock(&sw->lock);
+}
+
+void
+of_flow_resync_hw_all(ctrl_hdl_t *c_hdl)
+{
+    c_log_info("%s: ", FN);
+    of_switch_traverse_all(c_hdl, c_per_switch_flow_resync_hw,
+                           NULL);
+}
+
 static void
 of_flow_traverse_tbl(c_switch_t *sw, uint8_t tbl_type, uint8_t tbl_idx, 
                      void *u_arg, flow_parser_fn fn)
@@ -1118,10 +1345,12 @@ of_flow_traverse_tbl(c_switch_t *sw, uint8_t tbl_type, uint8_t tbl_idx,
         tbl = &sw->rule_flow_tbls[tbl_idx];
     }
 
-    if (tbl->c_fl_tbl_type == C_TBL_EXM) {
+    if (tbl->c_fl_tbl_type == C_TBL_EXM &&
+        tbl->exm_fl_hash_tbl) {
         g_hash_table_foreach(tbl->exm_fl_hash_tbl,
                              (GHFunc)of_flow_exm_iter, &args);
-    } else if (tbl->c_fl_tbl_type == C_TBL_RULE){
+    } else if (tbl->c_fl_tbl_type == C_TBL_RULE &&
+               tbl->rule_fl_tbl){
         g_slist_foreach(tbl->rule_fl_tbl, 
                         (GFunc)of_flow_rule_iter, &args);
     }
@@ -1134,7 +1363,9 @@ of_flow_traverse_tbl_all(c_switch_t *sw, void *u_arg, flow_parser_fn fn)
 {
     uint8_t       tbl_idx = 0;
 
+#ifdef CONFIG_FLOW_EXM
     of_flow_traverse_tbl(sw, C_TBL_EXM, tbl_idx, u_arg, fn);
+#endif
 
     for (; tbl_idx < C_MAX_RULE_FLOW_TBLS; tbl_idx++) {
         of_flow_traverse_tbl(sw, C_TBL_RULE, tbl_idx, u_arg, fn);
@@ -1151,14 +1382,16 @@ of_switch_flow_tbl_create(c_switch_t *sw)
     c_wr_lock(&sw->lock);
 
     tbl = &sw->exm_flow_tbl;
-    tbl->exm_fl_hash_tbl =
+    if (!tbl->exm_fl_hash_tbl) {
+        tbl->exm_fl_hash_tbl =
                     g_hash_table_new_full(of_flow_exm_key,
                                           of_flow_exm_key_cmp,
                                           of_flow_exm_key_free,
                                           __of_flow_exm_release);
-    assert(tbl->exm_fl_hash_tbl);
-    tbl->c_fl_tbl_type = C_TBL_EXM;
-    tbl->hw_tbl_idx = C_TBL_HW_IDX_DFL;
+        assert(tbl->exm_fl_hash_tbl);
+        tbl->c_fl_tbl_type = C_TBL_EXM;
+        tbl->hw_tbl_idx = C_TBL_HW_IDX_DFL;
+    }
 
     for (tbl_idx = 0; tbl_idx < C_MAX_RULE_FLOW_TBLS; tbl_idx++) {
         tbl = &sw->rule_flow_tbls[tbl_idx];
@@ -1189,6 +1422,7 @@ of_switch_flow_tbl_delete(c_switch_t *sw)
     tbl = &sw->exm_flow_tbl;
     if (tbl->exm_fl_hash_tbl) {
         g_hash_table_destroy(tbl->exm_fl_hash_tbl);
+        tbl->exm_fl_hash_tbl = NULL;
     }
 
     c_wr_unlock(&sw->lock);
@@ -1219,6 +1453,24 @@ of_switch_flow_tbl_reset(c_switch_t *sw)
     c_wr_unlock(&sw->lock);
 }
 
+static inline void
+of_prep_msg_on_stack(struct cbuf *b, size_t len, uint8_t type, uint32_t xid)
+{
+    struct ofp_header *h;
+
+    h = (void *)(b->data);
+
+    h->version = OFP_VERSION;
+    h->type = type;
+    h->length = htons(len);
+
+    h->xid = xid;
+
+    /* NOTE - No memset of extra data for performance */
+
+    return;
+}
+
 void
 of_send_features_request(c_switch_t *sw)
 {
@@ -1227,13 +1479,35 @@ of_send_features_request(c_switch_t *sw)
     /* Send OFPT_FEATURES_REQUEST. */
     b = of_prep_msg(sizeof(struct ofp_header), OFPT_FEATURES_REQUEST, 0);
 
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
 }
 
 void
 __of_send_features_request(c_switch_t *sw)
 {
     of_send_features_request(sw);
+    c_thread_sg_tx_sync(&sw->conn);
+}
+
+void
+of_send_set_config(c_switch_t *sw, uint16_t flags, uint16_t miss_len)
+{
+    struct cbuf *b;
+    struct ofp_switch_config *ofp_sc;
+    
+    /* Send OFPT_SET_CONFIG. */
+    b = of_prep_msg(sizeof(struct ofp_switch_config), OFPT_SET_CONFIG, 0);
+    ofp_sc = (void *)(b->data);
+    ofp_sc->flags = htons(flags);
+    ofp_sc->miss_send_len = htons(miss_len);
+
+    c_switch_tx(sw, b, true);
+}
+
+void
+__of_send_set_config(c_switch_t *sw, uint16_t flags, uint16_t miss_len)
+{
+    of_send_set_config(sw, flags, miss_len);
     c_thread_sg_tx_sync(&sw->conn);
 }
 
@@ -1245,7 +1519,7 @@ of_send_echo_request(c_switch_t *sw)
     /* Send OFPT_ECHO_REQUEST. */
     b = of_prep_msg(sizeof(struct ofp_header), OFPT_ECHO_REQUEST, 0);
 
-    c_thread_tx(&sw->conn, b, false);
+    c_switch_tx(sw, b, false);
 }
 
 void
@@ -1262,7 +1536,7 @@ of_send_echo_reply(c_switch_t *sw, uint32_t xid)
     /* Send OFPT_ECHO_REPLY */
     b = of_prep_msg(sizeof(struct ofp_header), OFPT_ECHO_REPLY, xid);
 
-    c_thread_tx(&sw->conn, b, false);
+    c_switch_tx(sw, b, false);
 }
 
 void
@@ -1279,7 +1553,7 @@ of_send_hello(c_switch_t *sw)
     /* Send OFPT_HELLO */
     b = of_prep_msg(sizeof(struct ofp_header), OFPT_HELLO, 0);
 
-    c_thread_tx(&sw->conn, b, false);
+    c_switch_tx(sw, b, false);
 }
 
 void __fastpath
@@ -1289,7 +1563,34 @@ of_send_pkt_out(c_switch_t *sw, struct of_pkt_out_params *parms)
 
     b = of_prep_pkt_out_msg(parms);
 
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
+} 
+
+void __fastpath
+of_send_pkt_out_inline(c_switch_t *sw, struct of_pkt_out_params *parms)
+{
+    struct cbuf     b;
+    size_t          tot_len;
+    uint8_t         data[C_INLINE_BUF_SZ];
+    struct ofp_packet_out *out;
+
+    tot_len = sizeof(struct ofp_packet_out)+parms->action_len+parms->data_len;
+
+    if (tot_len > C_INLINE_BUF_SZ) return of_send_pkt_out(sw, parms);
+
+    cbuf_init_on_stack(&b, data, tot_len);
+    of_prep_msg_on_stack(&b, tot_len, OFPT_PACKET_OUT, 
+                         (unsigned long)parms->data);
+
+    out = (void *)b.data;
+    out->buffer_id = htonl(parms->buffer_id);
+    out->in_port   = htons(parms->in_port);
+    out->actions_len = htons(parms->action_len);
+    memcpy(out->actions, parms->action_list, parms->action_len);
+    memcpy((uint8_t *)out->actions + parms->action_len, 
+            parms->data, parms->data_len);
+
+    c_switch_tx(sw, &b, false);
 } 
 
 void __fastpath
@@ -1300,19 +1601,21 @@ __of_send_pkt_out(c_switch_t *sw, struct of_pkt_out_params *parms)
 }
 
 static void
-of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, uint32_t buffer_id)
+of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, uint32_t buffer_id,
+                 bool ha_sync UNUSED)
 {
     struct cbuf *b = of_prep_flow_add_msg(&ent->fl, buffer_id, ent->actions, 
                                           ent->action_len, ent->FL_ITIMEO,
                                           ent->FL_HTIMEO, ent->FL_WILDCARDS,
                                           ent->FL_PRIO);
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
 } 
 
 static void UNUSED
-__of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, uint32_t buffer_id)
+__of_send_flow_add(c_switch_t *sw, c_fl_entry_t *ent, uint32_t buffer_id,
+                   bool ha_sync)
 {
-    of_send_flow_add(sw, ent, buffer_id);
+    of_send_flow_add(sw, ent, buffer_id, ha_sync);
     c_thread_sg_tx_sync(&sw->conn);
 }
 
@@ -1325,7 +1628,7 @@ of_send_flow_add_nocache(c_switch_t *sw, struct flow *fl, uint32_t buffer_id,
     struct cbuf *b = of_prep_flow_add_msg(fl, buffer_id, actions, 
                                           action_len, itimeo, htimeo,
                                           wildcards, prio);
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
 
     return 0;
 } 
@@ -1348,7 +1651,7 @@ of_send_flow_del(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport, bool strict)
 {
     struct cbuf *b = of_prep_flow_del_msg(&ent->fl, ent->FL_WILDCARDS, oport,
                                           strict); 
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
 }
 
 static void
@@ -1360,7 +1663,7 @@ of_send_flow_del_strict(c_switch_t *sw, c_fl_entry_t *ent, uint16_t oport)
 
     /* Kludge which I hate */
     ofm->priority = htons(ent->FL_PRIO);
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
 }
 
 static void UNUSED
@@ -1376,7 +1679,7 @@ of_send_flow_del_nocache(c_switch_t *sw, struct flow *fl, uint32_t wildcards,
 {
     struct cbuf *b = of_prep_flow_del_msg(fl, wildcards, oport, strict);
 
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
 
     return 0;
 }
@@ -1396,7 +1699,7 @@ of_send_flow_stat_req(c_switch_t *sw, const struct flow *flow,
 {
     struct cbuf *b = of_prep_flow_stat_msg(flow, wildcards, tbl_id, oport); 
     
-    c_thread_tx(&sw->conn, b, true);
+    c_switch_tx(sw, b, true);
     return 0;
 }
 
@@ -1430,6 +1733,7 @@ of_process_phy_port(c_switch_t *sw, void *opp_, uint8_t reason,
 
     switch (reason) {
     case OFPPR_DELETE:
+        c_log_err("%s: %llx port(%u) delete", FN, sw->DPID, port_no);
         if (!(sw->ports[port_no].valid & OFC_SW_PORT_VALID)) {
             /* Nothing to do */
             return;
@@ -1437,6 +1741,7 @@ of_process_phy_port(c_switch_t *sw, void *opp_, uint8_t reason,
 
         sw->n_ports--;
         memset (&sw->ports[port_no], 0, sizeof(struct ofp_phy_port));
+        sw->ports[port_no].valid = OFC_SW_PORT_INVALID;
         return;
     case OFPPR_ADD:
     case OFPPR_MODIFY:
@@ -1490,7 +1795,40 @@ of_recv_features_reply(c_switch_t *sw, struct cbuf *b)
 {
     struct ofp_switch_features  *osf = (void *)(b->data);
     size_t                       n_ports, i;
+    c_switch_t                  *old_sw = NULL;
+    struct flow                  flow;
 
+    memset(&flow, 0, sizeof(flow));
+    old_sw = of_switch_get(sw->c_hdl, ntohll(osf->datapath_id));
+    if (old_sw) {
+        switch (of_switch_clone_on_conn(sw, old_sw)) {
+        case SW_CLONE_USE: 
+            c_log_debug("%s: Use new switch conn", FN);
+            of_switch_put(old_sw);
+            break;
+        case SW_CLONE_DENY:
+            c_log_debug("%s: Denied new switch conn", FN);
+            sw->conn.dead = true; /* Indication to close the conn on switch delete */
+            of_switch_mark_sticky_del(sw); /* eventually switch should go */
+            of_switch_put(old_sw);
+            return;
+        case SW_CLONE_OLD:
+            c_log_debug("%s: Clone old switch conn", FN);
+            c_conn_events_del(&sw->conn);
+            of_switch_mark_sticky_del(sw);
+            old_sw->reinit_fd = sw->conn.fd;
+            old_sw->switch_state |= c_switch_is_virtual(sw) ?
+                                   SW_REINIT_VIRT:
+                                   SW_REINIT;
+            old_sw->switch_state &= ~SW_DEAD;
+            of_switch_put(old_sw);
+            return;
+        default:
+            c_log_err("%s: Unknown clone state", FN);
+            of_switch_put(old_sw);
+            return;
+        }
+    }
     n_ports = ((ntohs(osf->header.length)
                 - offsetof(struct ofp_switch_features, ports))
             / sizeof *osf->ports);
@@ -1498,32 +1836,35 @@ of_recv_features_reply(c_switch_t *sw, struct cbuf *b)
     sw->datapath_id = ntohll(osf->datapath_id);
     sw->version     = osf->header.version;
     sw->n_buffers   = ntohl(osf->n_buffers);
+    sw->n_ports     = 0;
     sw->n_tables    = osf->n_tables;
     sw->actions     = ntohl(osf->actions);
     sw->capabilities = ntohl(osf->capabilities);
+    memset(sw->ports, 0, sizeof(sw->ports)); 
 
     for (i = 0; i < n_ports; i++) {
         of_process_phy_port(sw, &osf->ports[i], OFPPR_ADD, NULL);
     }
 
-    of_switch_flow_tbl_create(sw);
-
-    sw->n_ports = n_ports;
-
-    if (sw->switch_state != SW_REGISTERED) {
+    if (!(sw->switch_state & SW_REGISTERED)) {
+        of_switch_flow_tbl_create(sw);
         of_switch_add(sw);
-        sw->switch_state = SW_REGISTERED;
-        sw->last_sample_time = g_get_monotonic_time();
+        sw->switch_state |= SW_REGISTERED;
+        sw->last_sample_time = time(NULL);
         sw->fp_ops.fp_fwd = of_dfl_fwd;
         sw->fp_ops.fp_port_status = of_dfl_port_status;
 
+        __of_send_flow_del_nocache(sw, &flow, htonl(OFPFW_ALL),
+                               OFPP_NONE, false);
+        __of_send_set_config(sw, 0x3, C_MAX_MISS_SEND_LEN);
         c_signal_app_event(sw, b, C_DP_REG, NULL, NULL);
     }
 }
 
 int __fastpath
 of_flow_extract(uint8_t *pkt, struct flow *flow, 
-                uint16_t in_port, size_t pkt_len)
+                uint16_t in_port, size_t pkt_len,
+                bool only_l2)
 {
     struct eth_header *eth;
     int    retval = 0;
@@ -1562,8 +1903,11 @@ of_flow_extract(uint8_t *pkt, struct flow *flow,
                                         VLAN_PCP_SHIFT) & VLAN_PCP_BITMASK);
     }
 
-    memcpy(flow->dl_src, eth->eth_src, ETH_ADDR_LEN);
-    memcpy(flow->dl_dst, eth->eth_dst, ETH_ADDR_LEN);
+    memcpy(flow->dl_dst, eth->eth_dst, 2*ETH_ADDR_LEN);
+
+    if (likely(only_l2)) {
+        return 0;
+    }
 
     if (likely(flow->dl_type == htons(ETH_TYPE_IP))) {
         const struct ip_header *nh;
@@ -1692,19 +2036,58 @@ of_do_flow_lookup_slow(c_switch_t *sw, struct flow *fl)
     return NULL;
 }
 
+static c_fl_entry_t *
+of_do_flow_lookup_with_details(c_switch_t *sw, struct flow *fl,
+                               uint32_t wildcards, uint16_t prio)
+{
+    c_flow_tbl_t     *tbl;
+    c_fl_entry_t     *ent = NULL;
+    int              idx;
+    GSList           *list = NULL;
+
+    c_rd_lock(&sw->lock);
+    for (idx = 0; idx < C_MAX_RULE_FLOW_TBLS; idx++) {
+        tbl = &sw->rule_flow_tbls[idx];
+        list = tbl->rule_fl_tbl;
+        if (tbl &&
+            (ent = __of_flow_lookup_rule_strict_prio_hint_detail
+                            (sw, &list, fl, wildcards, prio))) {
+            atomic_inc(&ent->FL_REF, 1);
+            c_rd_unlock(&sw->lock);
+            return ent;
+        }
+    }
+    c_rd_unlock(&sw->lock);
+
+    return NULL;
+}
 
 static inline c_fl_entry_t *
 of_do_flow_lookup(c_switch_t *sw, struct flow *fl)
 {
 
-#ifdef CONFIG_FLOW_EXM 
+#ifdef CONFIG_FLOW_EXM
     c_fl_entry_t *ent = NULL;
 
     if ((ent = of_flow_get_exm(sw, fl))) {
-        return ent;        
+        return ent;
     }
 #endif
     return of_do_flow_lookup_slow(sw, fl);
+}
+
+static inline c_fl_entry_t *
+of_do_flow_lookup_with_detail(c_switch_t *sw, struct flow *fl,
+                              uint32_t wildcards, uint16_t prio)
+{
+#ifdef CONFIG_FLOW_EXM
+    c_fl_entry_t *ent = NULL;
+
+    if ((ent = of_flow_get_exm(sw, fl))) {
+        return ent;
+    }
+#endif
+    return of_do_flow_lookup_with_details(sw, fl, wildcards, prio);
 }
 
 void
@@ -1772,7 +2155,7 @@ of_dfl_fwd(struct c_switch *sw, struct cbuf *b, void *data, size_t pkt_len,
         return 0;
     }
 
-    of_send_flow_add(sw, fl_ent, ntohl(opi->buffer_id));
+    of_send_flow_add(sw, fl_ent, ntohl(opi->buffer_id), true);
 
     parms.data       = 0;
     parms.data_len   = 0;
@@ -1803,12 +2186,14 @@ of_recv_packet_in(c_switch_t *sw, struct cbuf *b)
     size_t               pkt_ofs, pkt_len;
     struct flow          fl;
     uint16_t             in_port = ntohs(opi->in_port);
+    bool                 only_l2 = sw->fp_ops.fp_fwd == c_l2_lrn_fwd ? true : false;
 
     /* Extract flow data from 'opi' into 'flow'. */
     pkt_ofs = offsetof(struct ofp_packet_in, data);
     pkt_len = ntohs(opi->header.length) - pkt_ofs;
 
-    if(!sw->fp_ops.fp_fwd || of_flow_extract(opi->data, &fl, in_port, pkt_len) < 0) {
+    if(!sw->fp_ops.fp_fwd ||
+        of_flow_extract(opi->data, &fl, in_port, pkt_len, only_l2) < 0) {
         return;
     }
 
@@ -1937,13 +2322,13 @@ of_recv_err_msg(c_switch_t *sw, struct cbuf *b)
     }
 }
 
-static void
+static int
 of_flow_stats_update(c_switch_t *sw, struct ofp_flow_stats *ofp_stats)
 {
     c_fl_entry_t    *ent;
     struct flow     flow;
-    uint64_t        curr_time;
-    long double     time_diff;        
+    time_t          curr_time, time_diff;
+    int             ret = ntohs(ofp_stats->length) - sizeof(*ofp_stats);;
 
     memset(&flow, 0, sizeof(flow));
 
@@ -1959,38 +2344,52 @@ of_flow_stats_update(c_switch_t *sw, struct ofp_flow_stats *ofp_stats)
     flow.tp_src = ofp_stats->match.tp_src;
     flow.tp_dst = ofp_stats->match.tp_dst;
 
+    ent = of_do_flow_lookup_with_detail(sw, &flow,
+                    ofp_stats->match.wildcards, htons(ofp_stats->priority));
 
-    /* FIXME : Take prio into account for lookup */
-    ent = of_do_flow_lookup(sw, &flow);
-
-    if (!ent) {
-        c_log_err("%s: Unknown flow in stats reply", FN);
-        return;
+    if (!ent ||
+        ret != ent->action_len ||
+        (ret && memcmp(ofp_stats->actions, ent->actions, ent->action_len))) {
+        char *fl_str;
+        fl_str = of_dump_flow(&flow, ofp_stats->match.wildcards);
+        c_log_err("%s: 0x%llx Unknown flow (%s) in stats reply",
+                  FN, sw->DPID, fl_str);
+        free(fl_str);
+        if (ent) of_flow_entry_put(ent);
+        return ret;
     }
 
-    curr_time = g_get_monotonic_time();
-    time_diff =  (long double)((curr_time - ent->fl_stats.last_refresh))/TIME_uS_SCALE; 
+    curr_time = time(NULL);
+    time_diff = curr_time - ent->fl_stats.last_refresh; 
 
     if (ent->fl_stats.last_refresh && time_diff) {
-        ent->fl_stats.bps = (long double)(ntohll(ofp_stats->byte_count) 
-                                          - ent->fl_stats.byte_count)/time_diff; 
-        ent->fl_stats.pps = (long double)(ntohll(ofp_stats->packet_count) 
-                                          - ent->fl_stats.pkt_count)/time_diff; 
+        if (ntohll(ofp_stats->byte_count) >= ent->fl_stats.byte_count) {
+            ent->fl_stats.bps = (double)(ntohll(ofp_stats->byte_count)
+                                         - ent->fl_stats.byte_count)/time_diff;
+        } else {
+            c_log_err("%s: Byte count wrap around", FN);
+        }
+        if (ntohll(ofp_stats->packet_count) >= ent->fl_stats.pkt_count) {
+            ent->fl_stats.pps = (double)(ntohll(ofp_stats->packet_count)
+                                         - ent->fl_stats.pkt_count)/time_diff;
+        } else {
+            c_log_err("%s: Pkt count wrap around", FN);
+        }
     }
 
     ent->fl_stats.byte_count = ntohll(ofp_stats->byte_count);
     ent->fl_stats.pkt_count = ntohll(ofp_stats->packet_count);
-    ent->fl_stats.last_refresh = curr_time;    
+    ent->fl_stats.last_refresh = curr_time;
 
     of_flow_entry_put(ent);
 
-    return;
+    return ret;
 }
 
 static void
 of_per_flow_stats_scan(void *time_arg, c_fl_entry_t *ent)
 {
-    uint64_t time = *(uint64_t *)time_arg;
+    time_t time = *(time_t *)time_arg;
 
     if ((ent->FL_ENT_TYPE != C_TBL_EXM &&
         ent->FL_FLAGS & C_FL_ENT_CLONE) || 
@@ -2000,29 +2399,103 @@ of_per_flow_stats_scan(void *time_arg, c_fl_entry_t *ent)
 
     if (ent->FL_FLAGS & C_FL_ENT_GSTATS) 
         if (!ent->fl_stats.last_refresh || 
-            ((time - ent->fl_stats.last_refresh) > TIME_uS(5))) {
+            ((time - ent->fl_stats.last_refresh) > C_FL_STAT_TIMEO)) {
             __of_send_flow_stat_req(ent->sw, &ent->fl, ent->FL_WILDCARDS, 
                                     OF_ALL_TABLES, 0);   
         }
 }
 
 void
-of_per_switch_flow_stats_scan(c_switch_t *sw, uint64_t curr_time)
+of_per_switch_flow_stats_scan(c_switch_t *sw, time_t curr_time)
 {
     of_flow_traverse_tbl_all(sw, (void *)&curr_time, of_per_flow_stats_scan);    
 }
  
+static void
+of_recv_flow_mod(c_switch_t *sw, struct cbuf *b)
+{
+    struct flow                 flow;
+    struct ofp_flow_mod         *ofm = (void *)(b->data);
+    struct of_flow_mod_params   fl_parms;
+    void                        *app;
+    uint16_t                    command = ntohs(ofm->command);
+    bool                        flow_add;
 
+    if (!c_switch_is_virtual(sw)) {
+        c_log_err("%s: Unexpected msg", FN);
+        return;
+    }
+
+    switch (command) {
+    case OFPFC_MODIFY_STRICT:
+        flow_add = true;
+        break;
+    case OFPFC_DELETE:
+    case OFPFC_DELETE_STRICT: 
+        flow_add = false;
+        break;
+    default:
+        c_log_err("%s: Unexpected flow mod command", FN);
+        return;
+    }
+
+    memset(&flow, 0, sizeof(flow));
+    flow.in_port = ofm->match.in_port;
+    memcpy(flow.dl_src, ofm->match.dl_src, sizeof ofm->match.dl_src);
+    memcpy(flow.dl_dst, ofm->match.dl_dst, sizeof ofm->match.dl_dst);
+    flow.dl_vlan = ofm->match.dl_vlan;
+    flow.dl_type = ofm->match.dl_type;
+    flow.dl_vlan_pcp = ofm->match.dl_vlan_pcp;
+    flow.nw_src = ofm->match.nw_src;
+    flow.nw_dst = ofm->match.nw_dst;
+    flow.nw_proto = ofm->match.nw_proto;
+    flow.tp_src = ofm->match.tp_src;
+    flow.tp_dst = ofm->match.tp_dst;
+
+    fl_parms.wildcards = ofm->match.wildcards;
+    fl_parms.flow = &flow;
+    fl_parms.flags = (uint8_t)ntohl(ofm->buffer_id);
+    fl_parms.prio = ntohs(ofm->priority);
+    fl_parms.tbl_idx = C_RULE_FLOW_TBL_DFL;
+    if (flow_add) {
+        fl_parms.action_len = ntohs(ofm->header.length) - sizeof(*ofm); 
+        fl_parms.actions = calloc(1, fl_parms.action_len);
+        memcpy(fl_parms.actions, ofm->actions, fl_parms.action_len);
+    }
+
+    /* Controller owns only vty intalled static flows */
+    if (!(app = c_app_get(sw->c_hdl, C_VTY_NAME))) {
+        c_log_err("%s: |PANIC| Native vty app not found", FN);
+        return;
+    }
+
+    fl_parms.app_owner = app;
+    if (flow_add) {
+        of_flow_add(sw, &fl_parms);
+    } else {
+        of_flow_del(sw, &fl_parms);
+    }
+    c_app_put(app);
+}
+ 
 static void
 of_recv_stats_reply(c_switch_t *sw, struct cbuf *b)
 {
     struct ofp_stats_reply *ofp_sr = (void *)(b->data);
-
+    int act_len = 0;
 
     switch(ntohs(ofp_sr->type)) {
     case OFPST_FLOW:
         {
-            of_flow_stats_update(sw, (void *)(ofp_sr + 1));    
+            struct ofp_flow_stats *ofp_stats = (void *)(ofp_sr->body);
+            size_t stat_length = ntohs(ofp_sr->header.length) - sizeof(*ofp_sr);
+
+            while (stat_length) {
+                act_len = of_flow_stats_update(sw, (void *)(ofp_stats));
+                if (!act_len) break;
+                ofp_stats = (void *)((uint8_t *)(ofp_stats + 1) + act_len);
+                stat_length -= (sizeof(*ofp_stats) + act_len);
+            }
             break;
         }
     default:
@@ -2034,26 +2507,26 @@ of_recv_stats_reply(c_switch_t *sw, struct cbuf *b)
 }
 
 struct of_handler of_handlers[] __aligned = {
-    NULL_OF_HANDLER,                                            /* OFPT_HELLO */
-    { of_recv_err_msg, sizeof(struct ofp_error_msg) },          /* OFPT_ERROR */
-    { of_recv_echo_request, OFP_HDR_SZ },                       /* OFPT_ECHO_REQUEST */
-    { of_recv_echo_reply, OFP_HDR_SZ },                         /* OFPT_ECHO_REPLY */
-    NULL_OF_HANDLER,                                            /* OFPT_VENDOR */
-    NULL_OF_HANDLER,                                            /* OFPT_FEATURES_REQUEST */
-    { of_recv_features_reply, OFP_HDR_SZ },                     /* OFPT_FEATURES_REPLY */
-    NULL_OF_HANDLER,                                            /* OFPT_GET_CONFIG_REQUEST */
-    NULL_OF_HANDLER,                                            /* OFPT_GET_CONFIG_REPLY */
-    NULL_OF_HANDLER,                                            /* OFPT_SET_CONFIG */
-    { of_recv_packet_in, sizeof(struct ofp_packet_in) },        /* OFPT_PACKET_IN */
-    { of_flow_removed, sizeof(struct ofp_flow_removed) },       /* OFPT_FLOW_REMOVED */
-    { of_recv_port_status, sizeof(struct ofp_port_status) },    /* OFPT_PORT_STATUS */
-    NULL_OF_HANDLER,                                            /* OFPT_PACKET_OUT */
-    NULL_OF_HANDLER,                                            /* OFPT_FLOW_MOD */
-    NULL_OF_HANDLER,                                            /* OFPT_PORT_MOD */
-    NULL_OF_HANDLER,                                            /* OFPT_STATS_REQUEST */
-    { of_recv_stats_reply, sizeof(struct ofp_stats_reply) },    /* OFPT_STATS_REPLY */
-    NULL_OF_HANDLER,                                            /* OFPT_BARRIER_REQUEST */
-    NULL_OF_HANDLER,                                            /* OFPT_BARRIER_REPLY */
+    NULL_OF_HANDLER,                                                /* OFPT_HELLO */
+    { of_recv_err_msg, sizeof(struct ofp_error_msg), NULL },        /* OFPT_ERROR */
+    { of_recv_echo_request, OFP_HDR_SZ, NULL },                     /* OFPT_ECHO_REQUEST */
+    { of_recv_echo_reply, OFP_HDR_SZ, NULL },                       /* OFPT_ECHO_REPLY */
+    NULL_OF_HANDLER,                                                /* OFPT_VENDOR */
+    NULL_OF_HANDLER,                                                /* OFPT_FEATURES_REQUEST */
+    { of_recv_features_reply, OFP_HDR_SZ, NULL},                    /* OFPT_FEATURES_REPLY */
+    NULL_OF_HANDLER,                                                /* OFPT_GET_CONFIG_REQUEST */
+    NULL_OF_HANDLER,                                                /* OFPT_GET_CONFIG_REPLY */
+    NULL_OF_HANDLER,                                                /* OFPT_SET_CONFIG */
+    { of_recv_packet_in, sizeof(struct ofp_packet_in), NULL },      /* OFPT_PACKET_IN */
+    { of_flow_removed, sizeof(struct ofp_flow_removed), NULL },     /* OFPT_FLOW_REMOVED */
+    { of_recv_port_status, sizeof(struct ofp_port_status), NULL },  /* OFPT_PORT_STATUS */
+    NULL_OF_HANDLER,                                                /* OFPT_PACKET_OUT */
+    NULL_OF_HANDLER,                                                /* OFPT_FLOW_MOD */
+    NULL_OF_HANDLER,                                                /* OFPT_PORT_MOD */
+    NULL_OF_HANDLER,                                                /* OFPT_STATS_REQUEST */
+    { of_recv_stats_reply, sizeof(struct ofp_stats_reply), NULL },  /* OFPT_STATS_REPLY */
+    NULL_OF_HANDLER,                                                /* OFPT_BARRIER_REQUEST */
+    NULL_OF_HANDLER,                                                /* OFPT_BARRIER_REPLY */
 };
 
 void __fastpath
@@ -2075,26 +2548,8 @@ of_switch_recv_msg(void *sw_arg, struct cbuf *b)
         return;
     }
 
-    sw->last_refresh_time = g_get_monotonic_time();
+    sw->last_refresh_time = time(NULL);
     sw->conn.rx_pkts++;
 
     RET_OF_MSG_HANDLER(sw, of_handlers, b, oh->type, b->len);
-}
-    
-int
-of_ctrl_init(ctrl_hdl_t *c_hdl, size_t nthreads, size_t n_appthreads)
-{
-    memset (c_hdl, 0, sizeof(ctrl_hdl_t));
-    c_rw_lock_init(&c_hdl->lock);
-
-    c_hdl->sw_ipool = ipool_create(MAX_SWITCHES_PER_CLUSTER, 0);
-    assert(c_hdl->sw_ipool);
-
-    c_hdl->worker_ctx_list = (struct c_cmn_ctx **)malloc(nthreads * sizeof(void *));
-    assert(c_hdl->worker_ctx_list);
-
-    c_hdl->n_threads = nthreads;
-    c_hdl->n_appthreads = n_appthreads;
-
-    return 0;
 }

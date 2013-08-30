@@ -65,14 +65,15 @@ int     c_daemon (int nochdir, int noclose);
 pid_t   c_pid_output(const char *path);
 int     c_server_socket_create(uint32_t server_ip, uint16_t port);
 int     c_server_socket_create_blocking(uint32_t server_ip, uint16_t port);
-int     c_client_socket_create(char *server_ip, uint16_t port);
-int     c_client_socket_create_blocking(char *server_ip, uint16_t port);
+int     c_client_socket_create(const char *server_ip, uint16_t port);
+int     c_client_socket_create_blocking(const char *server_ip, uint16_t port);
 int     c_server_socket_close(int fd);
 int     c_client_socket_close(int fd);
 int     c_make_socket_nonblocking(int fd);
 int     c_make_socket_blocking(int fd);
 int     c_tcpsock_set_nodelay(int fd);
 int     c_sock_set_recvbuf(int fd, size_t len);
+int     c_sock_set_sndbuf(int fd, size_t len);
 void    c_hex_dump(void *ptr, int len);
 int     c_socket_read_nonblock_loop(int fd, void *arg, c_conn_t *conn, 
                             const size_t rcv_buf_sz,

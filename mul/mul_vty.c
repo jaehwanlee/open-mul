@@ -25,13 +25,27 @@ char              *vty_addr = NULL;
 int               vty_port  = C_VTY_PORT;
 extern ctrl_hdl_t ctrl_hdl;
 
-static const char *of_switch_states[] = {
-    "connected",
-    "negotiation",
-    "registered",
-    "dead",
-     NULL,
-};
+static void
+ofp_switch_states_tostr(char *string, uint32_t state)
+{
+    if (state == 0) {
+        strcpy(string, "Init\n");
+        return;
+    }
+    if (state & SW_REGISTERED) {
+        strcpy(string, "Registered ");
+    }
+    if (state & SW_REINIT) {
+        strcat(string, "Reinit");
+    }
+    if (state & SW_REINIT_VIRT) {
+        strcat(string, "Reinit-Virt");
+    }
+    if (state & SW_DEAD) {
+        strcat(string, "Dead");
+    }
+}
+ 
 
 static void
 ofp_capabilities_tostr(char *string, uint32_t capabilities)
@@ -41,7 +55,7 @@ ofp_capabilities_tostr(char *string, uint32_t capabilities)
         return;
     }
     if (capabilities & OFPC_FLOW_STATS) {
-        strcat(string, "FLOW_STATS ");
+        strcpy(string, "FLOW_STATS ");
     }
     if (capabilities & OFPC_TABLE_STATS) {
         strcat(string, "TABLE_STATS ");
@@ -123,11 +137,13 @@ of_show_switch_info(void *k, void *v UNUSED, void *arg)
 {
     c_switch_t  *sw = k;
     struct      vty *vty = arg;
+    char        string[OFP_PRINT_MAX_STRLEN];
 
+    ofp_switch_states_tostr(string, sw->switch_state);
 
     vty_out (vty, "0x%012llx    %-11s %-26s %-8d %s",
              sw->datapath_id,
-             of_switch_states[sw->switch_state],
+             string,
              sw->conn.conn_str,
              sw->n_ports,
              VTY_NEWLINE);
@@ -566,7 +582,7 @@ DEFUN (flow_actions_commit,
         if ((args->action_len >= 4 || args->drop_pkt)&& args->sw) {
 
             app = c_app_get(&ctrl_hdl, C_VTY_NAME);
-            if (app && sw->switch_state == SW_REGISTERED) {
+            if (app && sw->switch_state & SW_REGISTERED) {
                 
                 /* TODO action validation here */
                 memset(&fl_parms, 0, sizeof(fl_parms));

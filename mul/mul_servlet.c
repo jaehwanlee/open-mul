@@ -19,18 +19,39 @@
 
 #include "mul_common.h"
 #include "mul_servlet.h"
+#include "mul_nbapi.h"
 
 static char print_sep[] =
             "-------------------------------------------"
             "----------------------------------\r\n";
 
-static const char *of_switch_states[] = {
-    "connected",
-    "negotiation",
-    "registered",
-    "dead",
-     NULL,
-};
+static char *ha_state[] = { "HA None",
+                            "HA Connected",
+                            "HA Master",
+                            "HA Slave",
+                            "HA Conflict",
+                            "HA Disabled" };
+
+static void
+ofp_switch_states_tostr(char *string, uint32_t state)
+{
+    if (state == 0) {
+        strcpy(string, "Init\n");
+        return;
+    }
+    if (state & SW_REGISTERED) {
+        strcpy(string, "Registered ");
+    }
+    if (state & SW_REINIT) {
+        strcat(string, "Reinit");
+    }
+    if (state & SW_REINIT_VIRT) {
+        strcat(string, "Reinit-Virt");
+    }
+    if (state & SW_DEAD) {
+        strcat(string, "Dead");
+    }
+}
 
 static void
 ofp_port_config_tostr(char *string, uint32_t config)
@@ -279,6 +300,7 @@ of_dump_actions_cmd(void *actions, size_t action_len)
                                 "action-add strip-vlan\r\n");
                 assert(len < OF_DUMP_ACT_SZ-1);
                 parsed_len = sizeof(struct ofp_action_header);    
+                break;
             }
         case OFPAT_SET_NW_SRC:
             {
@@ -289,6 +311,7 @@ of_dump_actions_cmd(void *actions, size_t action_len)
                                 inet_ntoa(in_addr));
                 assert(len < OF_DUMP_ACT_SZ-1);
                 parsed_len = sizeof(*nw_addr_act);
+                break;
             }
         case OFPAT_SET_NW_DST:
             {
@@ -299,6 +322,7 @@ of_dump_actions_cmd(void *actions, size_t action_len)
                                 inet_ntoa(in_addr));
                 assert(len < OF_DUMP_ACT_SZ-1);
                 parsed_len = sizeof(*nw_addr_act);
+                break;
             }
         default:
             {
@@ -349,6 +373,8 @@ mul_get_switches_brief(void *service)
     struct cbuf *b;
     struct c_ofp_auxapp_cmd *cofp_auc;
 
+    if (!service) return NULL;
+
     b = of_prep_msg(sizeof(struct c_ofp_auxapp_cmd),
                     C_OFPT_AUX_CMD, 0);
 
@@ -378,6 +404,7 @@ mul_dump_switches_brief(struct cbuf *b, bool free_buf)
     char    *pbuf = calloc(1, SWITCH_BR_PBUF_SZ);
     int     len = 0; 
     int     i = 0, n_switches;
+    char    string[OFP_PRINT_MAX_STRLEN];
     c_ofp_auxapp_cmd_t *cofp_auc;
     c_ofp_switch_brief_t *cofp_swb;
     
@@ -393,10 +420,11 @@ mul_dump_switches_brief(struct cbuf *b, bool free_buf)
     cofp_swb = (void *)(cofp_auc->data);
     for (; i < n_switches; i++) {
         cofp_swb->conn_str[OFP_CONN_DESC_SZ-1] = '\0';
+        ofp_switch_states_tostr(string, ntohl(cofp_swb->state));
         len += snprintf(pbuf + len, SWITCH_BR_PBUF_SZ-len-1,
                         "0x%012llx    %-11s %-26s %-8d\r\n",
                         ntohll(cofp_swb->switch_id.datapath_id),
-                        of_switch_states[ntohl(cofp_swb->state)],
+                        string,
                         cofp_swb->conn_str,
                         ntohl(cofp_swb->n_ports));
         if (len >= SWITCH_BR_PBUF_SZ-1) {
@@ -426,6 +454,8 @@ mul_get_switch_detail(void *service, uint64_t dpid)
     struct c_ofp_auxapp_cmd *cofp_auc;
     struct c_ofp_req_dpid_attr *cofp_rda;
     struct ofp_header *h;
+
+    if (!service) return NULL;
 
     b = of_prep_msg(sizeof(*cofp_auc) + sizeof(*cofp_rda),
                     C_OFPT_AUX_CMD, 0);
@@ -474,7 +504,11 @@ mul_dump_switch_detail(struct cbuf *b, bool free_buf)
 
     len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1, "Datapath-id : 0x%llx\r\n",
                     ntohll(osf->datapath_id));
-    if (len >= MUL_SERVLET_PBUF_DFL_SZ-1) goto out_pbuf_err; 
+    if (len >= MUL_SERVLET_PBUF_DFL_SZ-1) goto out_pbuf_err;
+
+    len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1, "Alias-id    : %d\r\n",
+                    C_GET_ALIAS_IN_SWADD(osf));
+    if (len >= MUL_SERVLET_PBUF_DFL_SZ-1) goto out_pbuf_err;
 
     len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1,
                     "Buffers     : %d\r\n",ntohl(osf->n_buffers));
@@ -546,23 +580,23 @@ out_pbuf_err:
 }
 
 static void
-mul_dump_single_flow(struct c_ofp_flow_mod *cofp_fm, void *arg,
-                     void (*cb_fn)(void *arg, char *pbuf))
+mul_dump_single_flow(struct c_ofp_flow_info *cofp_fi, void *arg,
+                     void (*cb_fn)(void *arg, void *pbuf))
 {
     char     *pbuf;
     int      len = 0;
     size_t   action_len;
 
-    action_len = ntohs(cofp_fm->header.length) - sizeof(*cofp_fm);
+    action_len = ntohs(cofp_fi->header.length) - sizeof(*cofp_fi);
         
     cb_fn(arg, print_sep);
-    pbuf = of_dump_flow(&cofp_fm->flow, cofp_fm->wildcards);
+    pbuf = of_dump_flow(&cofp_fi->flow, cofp_fi->wildcards);
     if (pbuf) {
         cb_fn(arg, pbuf);
         free(pbuf);
     }
 
-    pbuf = of_dump_actions(cofp_fm->actions, action_len);
+    pbuf = of_dump_actions(cofp_fi->actions, action_len);
     if (pbuf) {
         cb_fn(arg, pbuf);
         free(pbuf);
@@ -572,14 +606,25 @@ mul_dump_single_flow(struct c_ofp_flow_mod *cofp_fm, void *arg,
     if (!pbuf) return; 
 
     len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1,
-                    "%s: %hu\r\n", "Prio", ntohs(cofp_fm->priority));
+                    "%s: %hu\r\n", "Prio", ntohs(cofp_fi->priority));
 
     len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1,
                     "%s: %s %s %s\r\n", "Flags",
-            cofp_fm->flags & C_FL_ENT_STATIC ? "static":"dynamic",
-            cofp_fm->flags & C_FL_ENT_CLONE ? "clone": "no-clone",
-            cofp_fm->flags & C_FL_ENT_LOCAL ? "local": "non-local"); 
+            cofp_fi->flags & C_FL_ENT_STATIC ? "static":"dynamic",
+            cofp_fi->flags & C_FL_ENT_CLONE ? "clone": "no-clone",
+            cofp_fi->flags & C_FL_ENT_LOCAL ? "local": "non-local"); 
+    len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1,
+                    "Datapath-id: 0x%llx\r\n", ntohll(cofp_fi->datapath_id));
 
+    if (cofp_fi->flags & C_FL_ENT_GSTATS) {
+        len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1,
+                        "Stats: Bytes %llu Packets %llu\r\n",
+                        ntohll(cofp_fi->byte_count), ntohll(cofp_fi->packet_count));
+        len += snprintf(pbuf+len, MUL_SERVLET_PBUF_DFL_SZ-len-1,
+                        "       Bps %s Pps %s\r\n",
+                        cofp_fi->bps, cofp_fi->pps);
+    }
+            
     cb_fn(arg, pbuf);
     free(pbuf);
 
@@ -590,22 +635,22 @@ mul_dump_single_flow(struct c_ofp_flow_mod *cofp_fm, void *arg,
 }
 
 static void
-mul_dump_single_flow_cmd(struct c_ofp_flow_mod *cofp_fm, void *arg,
-                         void (*cb_fn)(void *arg, char *pbuf))
+mul_dump_single_flow_cmd(struct c_ofp_flow_info *cofp_fi, void *arg,
+                         void (*cb_fn)(void *arg, void *pbuf))
 {
     char     *pbuf;
     size_t   action_len;
 
-    action_len = ntohs(cofp_fm->header.length) - sizeof(*cofp_fm);
+    action_len = ntohs(cofp_fi->header.length) - sizeof(*cofp_fi);
 
-    pbuf = of_dump_flow_cmd(&cofp_fm->flow, cofp_fm->wildcards,
-                            ntohll(cofp_fm->datapath_id));
+    pbuf = of_dump_flow_cmd(&cofp_fi->flow, cofp_fi->wildcards,
+                            ntohll(cofp_fi->datapath_id));
     if (pbuf) {
         cb_fn(arg, pbuf);
         free(pbuf);
     }
 
-    pbuf = of_dump_actions_cmd(cofp_fm->actions, action_len);
+    pbuf = of_dump_actions_cmd(cofp_fi->actions, action_len);
     if (pbuf) {
         cb_fn(arg, pbuf);
         free(pbuf);
@@ -619,16 +664,38 @@ mul_dump_single_flow_cmd(struct c_ofp_flow_mod *cofp_fm, void *arg,
  *
  * Dump all flows 
  */
-void
+int
 mul_get_flow_info(void *service, uint64_t dpid, bool flow_self,
-                  bool dump_cmd, void *arg,
-                  void (*cb_fn)(void *arg, char *pbuf))
+                  bool dump_cmd, bool nbapi_cmd, void *arg,
+                  void (*cb_fn)(void *arg, void *pbuf))
 {
     struct cbuf *b;
     struct c_ofp_auxapp_cmd *cofp_auc;
     struct c_ofp_req_dpid_attr *cofp_rda;
-    struct c_ofp_flow_mod *cofp_fm;
+    struct c_ofp_flow_info *cofp_fi;
+    nbapi_resp_show_of_flow_t *nbapi_flow_resp = NULL;
     struct ofp_header *h;
+    int n_flows = 0;
+
+    if (!service) return -1;
+
+    if (!cb_fn) {
+        c_log_err("%s: cb fn is null", FN);
+        return -1;
+    }
+
+    if (nbapi_cmd) {
+        if (dump_cmd) {
+            c_log_err("%s: Invalid args", FN);
+            return -1;
+        }
+        nbapi_flow_resp = calloc(1, sizeof(*nbapi_flow_resp));
+        if (!nbapi_flow_resp) {
+            c_log_err("%s: nbapi msg alloc failed", FN);
+            return -1;
+        }
+        nbapi_flow_resp->header.type = NB_SHOW_OF_SWITCH_FLOW;
+    }
 
     b = of_prep_msg(sizeof(*cofp_auc) + sizeof(*cofp_rda),
                     C_OFPT_AUX_CMD, 0);
@@ -649,23 +716,29 @@ mul_get_flow_info(void *service, uint64_t dpid, bool flow_self,
                 free_cbuf(b);
                 break;
             }
-            cofp_fm = (void *)(b->data);
+            cofp_fi = (void *)(b->data);
 
-            if (ntohs(cofp_fm->header.length) < sizeof(*cofp_fm)) {
+            if (ntohs(cofp_fi->header.length) < sizeof(*cofp_fi)) {
                 free_cbuf(b);
                 break;
 
             } 
 
             if (!dump_cmd) {
-                mul_dump_single_flow(cofp_fm, arg, cb_fn);
+                if (!nbapi_cmd) {
+                    mul_dump_single_flow(cofp_fi, arg, cb_fn);
+                } else {
+                	cb_fn(arg, cofp_fi);
+                }
             } else {
-                mul_dump_single_flow_cmd(cofp_fm, arg, cb_fn);
+                mul_dump_single_flow_cmd(cofp_fi, arg, cb_fn);
             }
             free_cbuf(b);
+            n_flows++;
         } else {
             break;
         }
     }
+
+    return n_flows;
 }
- 

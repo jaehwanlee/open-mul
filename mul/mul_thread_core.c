@@ -237,9 +237,8 @@ c_main_thread_final_init(struct c_main_ctx *m_ctx)
     pthread_create(&vty_ctx->cmn_ctx.thread, NULL, c_thread_main, vty_ctx);
 
 
-
     /* Switch listener */
-    c_listener = c_server_socket_create(INADDR_ANY, C_LISTEN_PORT);
+    c_listener = c_server_socket_create(INADDR_ANY, ctrl_hdl->c_port);
     assert(c_listener > 0);
     m_ctx->c_accept_event = event_new(m_ctx->cmn_ctx.base, c_listener, 
                                       EV_READ|EV_PERSIST,

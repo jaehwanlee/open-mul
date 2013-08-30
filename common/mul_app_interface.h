@@ -25,11 +25,19 @@ extern initcall_t __start_modinit_sec, __stop_modinit_sec;
 #define data_attr         __attribute__ ((section ("modinit_sec")))
 #define module_init(x)   initcall_t _##x data_attr = x
 
+#ifndef SWIG
 extern initcall_t __start_modvtyinit_sec, __stop_modvtyinit_sec;
 #define vty_attr         __attribute__ ((section ("modvtyinit_sec")))
 #define module_vty_init(x)  initcall_t _##x vty_attr = x
+#endif
 
 #include "openflow.h"
+
+/* Registered application names */
+#define FAB_APP_NAME "mul-fabric"
+#define CLI_APP_NAME "mul-cli"
+#define L2SW_APP_NAME "mul-l2sw"
+#define TR_APP_NAME "mul-tr"
 
 /* Controller app event notifications */
 typedef enum c_app_event {
@@ -39,6 +47,7 @@ typedef enum c_app_event {
     C_PORT_CHANGE,
     C_FLOW_REMOVED,
     C_FLOW_MOD_FAILED,
+	C_HA_STATE,
     C_EVENT_MAX
 } c_app_event_t;
 #define C_APP_ALL_EVENTS  ((1 << C_EVENT_MAX) - 1) 
@@ -90,8 +99,8 @@ struct flow {
     uint16_t            dl_type;           /* Ethernet frame type. */
     uint16_t            tp_src;            /* TCP/UDP source port. */
     uint16_t            tp_dst;            /* TCP/UDP destination port. */
-    uint8_t             dl_src[6];         /* Ethernet source address. */
     uint8_t             dl_dst[6];         /* Ethernet destination address. */
+    uint8_t             dl_src[6];         /* Ethernet source address. */
     uint8_t             dl_vlan_pcp;       /* Input VLAN priority. */
     uint8_t             nw_tos;            /* IPv4 DSCP. */
     uint8_t             nw_proto;          /* IP protocol. */
@@ -153,6 +162,31 @@ struct c_ofp_flow_mod {
     struct ofp_action_header actions[0];
 };
 OFP_ASSERT(sizeof(struct c_ofp_flow_mod) == (80));
+
+struct c_ofp_flow_info {
+    struct ofp_header   header;
+    uint64_t            datapath_id;
+    uint32_t            sw_alias;
+
+    struct flow         flow; 
+    uint8_t             flags;
+    uint8_t             command;
+    uint16_t            priority;
+    uint32_t            wildcards;
+    uint16_t            itimeo;
+    uint16_t            htimeo;
+    uint16_t            mod_flags;
+    uint16_t            oport;
+    uint32_t            buffer_id;
+	uint32_t			pad;
+    uint64_t            byte_count;
+    uint64_t            packet_count;
+#define C_FL_XPS_SZ 32
+    uint8_t             bps[C_FL_XPS_SZ];
+    uint8_t             pps[C_FL_XPS_SZ];
+    struct ofp_action_header actions[0];
+};
+OFP_ASSERT(sizeof(struct c_ofp_flow_info) == (160));
 
 /* Flow removed (datapath -> controller). */
 struct c_ofp_flow_removed {
@@ -233,7 +267,7 @@ struct c_ofp_auxapp_cmd {
 #define C_AUX_CMD_TR_BASE (C_AUX_CMD_MUL_CORE_BASE + 1000) 
 #define C_AUX_CMD_TR_GET_NEIGH (C_AUX_CMD_TR_BASE + 1)
 #define C_AUX_CMD_TR_NEIGH_STATUS (C_AUX_CMD_TR_GET_NEIGH + 1)
-#define C_AUX_CMD_FAB_BASE (C_AUX_CMD_MUL_CORE_BASE + 200) 
+#define C_AUX_CMD_FAB_BASE (C_AUX_CMD_MUL_CORE_BASE + 2000) 
 #define C_AUX_CMD_FAB_HOST_ADD (C_AUX_CMD_FAB_BASE + 1) 
 #define C_AUX_CMD_FAB_HOST_DEL (C_AUX_CMD_FAB_BASE + 2) 
 #define C_AUX_CMD_FAB_SHOW_ACTIVE_HOSTS (C_AUX_CMD_FAB_BASE + 3)
@@ -267,10 +301,11 @@ struct c_ofp_switch_neigh {
 };
 OFP_ASSERT(sizeof(struct c_ofp_switch_neigh) == 8);
 
-#define SW_INIT (0)
-#define SW_FEATURE_NEGO (1)
-#define SW_REGISTERED (2)
-#define SW_DEAD (3)
+#define SW_INIT             (0)
+#define SW_REGISTERED       (0x1)
+#define SW_DEAD             (0x2)
+#define SW_REINIT           (0x4)
+#define SW_REINIT_VIRT      (0x8)
 
 struct c_ofp_switch_brief {
     struct c_ofp_req_dpid_attr switch_id;
@@ -303,6 +338,18 @@ struct c_ofp_route_link {
 };
 OFP_ASSERT(sizeof(struct c_ofp_route_link) == 16);
 
+struct c_ofp_ha_state {
+    uint32_t                   ha_sysid;
+#define C_HA_STATE_NONE (0)
+#define C_HA_STATE_CONNECTED (1)
+#define C_HA_STATE_MASTER (2)
+#define C_HA_STATE_SLAVE (3)
+#define C_HA_STATE_CONFLICT (4)
+#define C_HA_STATE_NOHA (5)
+    uint32_t                   ha_state;
+};
+OFP_ASSERT(sizeof(struct c_ofp_ha_state) == 8);
+
 #define C_OFP_ERR_CODE_BASE (100)
 
 /* More bad request codes */
@@ -323,16 +370,17 @@ OFP_ASSERT(sizeof(struct c_ofp_route_link) == 16);
 
 #define C_ADD_ALIAS_IN_SWADD(sw_add, alias)         \
     do {                                            \
-        *((int *)(sw_add->pad)) = htonl(alias);     \
+        *((uint16_t *)(sw_add->pad)) = htons((uint16_t)alias);     \
     } while (0)
 
-#define C_GET_ALIAS_IN_SWADD(sw_add) ntohl(*((int *)(sw_add->pad)))
+#define C_GET_ALIAS_IN_SWADD(sw_add) (int)ntohs(*((uint16_t *)(sw_add->pad)))
 
 typedef struct c_ofp_switch_delete c_ofp_switch_delete_t;
 typedef struct ofp_switch_features c_ofp_switch_add_t;
 typedef struct c_ofp_packet_in c_ofp_packet_in_t;;
 typedef struct c_ofp_port_status c_ofp_port_status_t;
 typedef struct c_ofp_flow_mod c_ofp_flow_mod_t;
+typedef struct c_ofp_flow_info c_ofp_flow_info_t;
 typedef struct c_ofp_packet_out c_ofp_packet_out_t; 
 typedef struct c_ofp_register_app c_ofp_register_app_t;
 typedef struct c_ofp_unregister_app c_ofp_unregister_app_t;
@@ -346,6 +394,7 @@ typedef struct c_ofp_switch_brief c_ofp_switch_brief_t;
 typedef struct c_ofp_host_mod c_ofp_host_mod_t; 
 typedef struct c_ofp_route c_ofp_route_t;
 typedef struct c_ofp_route_link c_ofp_route_link_t;
+typedef struct c_ofp_ha_state c_ofp_ha_state_t;
 
 void mul_app_free_buf(void *b);
 int mul_register_app(void *app, char *app_name, uint32_t app_flags,
@@ -373,11 +422,11 @@ void mul_app_send_pkt_out(void *sw_arg, uint64_t dpid, void *parms);
 void *mul_app_create_service(char *name,
                              void (*service_handler)(void *service, 
                                                      struct cbuf *msg));
-void *mul_app_get_service(char *name);
+void *mul_app_get_service(char *name, const char *server);
 void *mul_app_get_service_notify(char *name,
                           void (*conn_update)(void *service,
                                               unsigned char conn_event),
-                          bool retry_conn);
+                          bool retry_conn, const char *server);
 void mul_app_destroy_service(void *service);
 
 #endif

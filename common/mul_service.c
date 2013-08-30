@@ -20,7 +20,7 @@
 
 char *__server = "127.0.0.1";
 
-static int c_service_client_sock_init(mul_service_t *serv, char *__server);
+static int c_service_client_sock_init(mul_service_t *serv, const char *__server);
 
 static void
 c_service_write_event_sched(void *conn_arg)
@@ -216,7 +216,7 @@ c_service_reconn_timer(evutil_socket_t fd UNUSED, short event UNUSED,
 
    c_log_debug("Retry Conn to service %s", service->service_name);
 
-    if(!c_service_client_sock_init(service, __server)) {
+    if(!c_service_client_sock_init(service, service->server?:__server)) {
         c_log_debug("Connection to service %s restored", service->service_name);
         event_del((struct event *)(service->reconn_timer_event));
         event_free((struct event *)(service->reconn_timer_event));
@@ -328,7 +328,7 @@ c_service_server_sock_init(mul_service_t *serv, char *server UNUSED)
 }
 
 static int
-c_service_client_sock_init(mul_service_t *serv, char *__server)
+c_service_client_sock_init(mul_service_t *serv, const char *__server)
 {
     serv->conn.fd = c_client_socket_create_blocking(__server, 
                                                     serv->serv_port);
@@ -342,18 +342,21 @@ c_service_client_sock_init(mul_service_t *serv, char *__server)
 static void
 c_service_init(mul_service_t *new_service, void *base, 
                const char *name, uint16_t service_port,
-               void (*service_handler)(void *service, struct cbuf *msg))
+               void (*service_handler)(void *service, struct cbuf *msg),
+               void *ctx_arg)
 {
     strncpy(new_service->service_name, name, MAX_SERV_NAME_LEN - 1);
     new_service->ev_base = base;
     new_service->ev_cb = service_handler;
     new_service->serv_port = service_port;
+    new_service->ctx_arg = ctx_arg;
     c_rw_lock_init(&new_service->conn.conn_lock); 
 }
 
 mul_service_t *
 mul_service_start(void *base, const char *name, uint16_t service_port, 
-                  void (*service_handler)(void *service, struct cbuf *msg))
+                  void (*service_handler)(void *service, struct cbuf *msg),
+                  void *ctx_arg)
 {
     mul_service_t *new_service = NULL;
 
@@ -362,7 +365,8 @@ mul_service_start(void *base, const char *name, uint16_t service_port,
         return NULL;
     }
 
-    c_service_init(new_service, base, name, service_port, service_handler);
+    c_service_init(new_service, base, name, service_port, service_handler,
+                   ctx_arg);
     
     while (c_service_server_sock_init(new_service, __server) < 0) {
         c_log_debug("Cannot start service %s..\n", new_service->service_name);
@@ -376,7 +380,8 @@ mul_service_t *
 mul_service_instantiate(void *base, const char *name, uint16_t service_port,
                         void (*conn_update)(void *service,
                                             unsigned char conn_event),
-                        bool retry_conn)
+                        bool (*keepalive)(void *service),
+                        bool retry_conn, const char *server)
 {
     mul_service_t *new_service = NULL;
     struct timeval tv = { 2, 0 };
@@ -386,11 +391,13 @@ mul_service_instantiate(void *base, const char *name, uint16_t service_port,
         return NULL;
     }
 
-    c_service_init(new_service, base, name, service_port, NULL);
+    c_service_init(new_service, base, name, service_port, NULL, NULL);
     new_service->is_client = true;
     new_service->conn_update = conn_update;
+    new_service->keepalive = keepalive;
+    new_service->server = server;
 
-    while (c_service_client_sock_init(new_service, __server) < 0) {
+    while (c_service_client_sock_init(new_service, new_service->server?:__server) < 0) {
         c_log_debug("Cannot start service %s..\n", new_service->service_name);
         if (!retry_conn) {
             return NULL;
@@ -408,12 +415,18 @@ mul_service_instantiate(void *base, const char *name, uint16_t service_port,
     return new_service;
 }
 
+
 void
 mul_service_destroy(mul_service_t *service)
 {
    if (service->reconn_timer_event) {
         event_del((struct event *)(service->reconn_timer_event));
         event_free((struct event *)(service->reconn_timer_event));
+   }
+
+   if (service->valid_timer_event) {
+        event_del((struct event *)(service->valid_timer_event));
+        event_free((struct event *)(service->valid_timer_event));
    }
 
    if (!service->conn.dead) close(service->conn.fd);
@@ -426,6 +439,10 @@ mul_service_alive(mul_service_t *service)
 {
     struct cbuf *b;
     struct c_ofp_auxapp_cmd *cofp_auc;
+
+    if (service->keepalive) {
+        return service->keepalive(service);
+    }
 
     b = of_prep_msg(sizeof(*cofp_auc), C_OFPT_AUX_CMD, 0);
 

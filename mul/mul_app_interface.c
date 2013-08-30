@@ -488,7 +488,7 @@ c_app_event_finish(c_switch_t *sw, c_app_info_t *app, void *pkt_arg)
 
     if (app->app_flags & C_APP_REMOTE)  {
         app->ev_cb(app, pkt_arg);
-    } else {
+    } else if (sw) {
         ev_q_ent = malloc(sizeof(*ev_q_ent));
         if (unlikely(!ev_q_ent)) return;
         atomic_inc(&app->ref, 1);
@@ -517,6 +517,10 @@ c_app_event_send(void *arg, void *u_arg)
 static inline void
 c_switch_app_eventq_send(c_switch_t *sw)
 {
+    if (!sw) {
+        return;
+    }
+
     /* Strategically dont care about locking */
     if (sw->app_eventq) {
         g_slist_foreach(sw->app_eventq,
@@ -707,12 +711,36 @@ c_app_flow_mod_failed_event(c_switch_t *sw, void *buf,
     return c_app_event_finish(sw, app, new_b);
 }
 
+static inline void
+c_process_app_event_loop(c_switch_t *sw, void *b, c_app_event_t event,
+                         struct c_app_handler_op *app_op, void *app,
+                         void *priv)
+{
+    c_app_info_t *__app = app;
+    GSList *iter = NULL;
+
+    if (__app) {
+        if (((1 << event) & __app->ev_mask)) {
+            app_op->app_handler(sw, b, __app, priv);
+        }
+        return;
+    } 
+
+    for (iter = sw ? sw->app_list:ctrl_hdl.app_list; iter; iter = iter->next) {
+        __app = iter->data;
+        if (!((1 << event) & __app->ev_mask)) {
+            continue;
+        }
+        app_op->app_handler(sw, b, __app, priv); 
+    }
+
+    return;
+}
+
 void __fastpath
 c_signal_app_event(c_switch_t *sw, void *b, c_app_event_t event, 
                    void *app_arg, void *priv)
 {
-    c_app_info_t *app = app_arg;
-    GSList *iterator = NULL;
     struct c_app_handler_op *app_op;
 
     app_op = &event[c_app_handler_ops];
@@ -726,15 +754,10 @@ c_signal_app_event(c_switch_t *sw, void *b, c_app_event_t event,
     c_sw_hier_rdlock(sw);
 
     if (app_op->pre_proc) app_op->pre_proc(sw);
-    if (app) {
-        C_PROCESS_APP_EVENT_LOOP(sw, b, event, app_op, app); 
-    } else {    
-        C_PROCESS_ALL_APP_EVENT_LOOP(sw, b, event, app_op); 
-    }
+    c_process_app_event_loop(sw, b, event, app_op, app_arg, priv);
     if (app_op->post_proc) app_op->post_proc(sw);
 
     c_sw_hier_unlock(sw);
-
     c_switch_app_eventq_send(sw); 
 
     return;
@@ -768,8 +791,9 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
     }
 
     if (!sw) {
-        c_log_err("%s: Invalid switch-dpid(0x%llx)", FN,
-                  (unsigned long long)ntohll(cofp_fm->DPID));
+        c_log_err("%s: Invalid switch:dpid(0x%llx) alias(%d)", FN,
+                  (unsigned long long)ntohll(cofp_fm->DPID),
+                  (int)(ntohl(cofp_fm->sw_alias)));
         RETURN_APP_ERR(app_arg, b, ret, OFPET_BAD_REQUEST, OFPBRC_BAD_DPID);  
     }
 
@@ -784,8 +808,11 @@ c_app_flow_mod_command(void *app_arg, struct cbuf *b, void *data)
 
     of_flow_correction(&cofp_fm->flow, &cofp_fm->wildcards);
 
-    if (of_validate_actions(cofp_fm->actions, action_len)) {
-        c_log_err("%s: Invalid action list", FN);
+    if (/*!of_switch_port_valid(sw, ntohs(cofp_fm->flow.in_port), cofp_fm->wildcards) || */
+        (cofp_fm->command == C_OFPC_ADD && 
+         of_validate_actions_strict(sw, cofp_fm->actions, action_len))) {
+        of_switch_put(sw);
+        c_log_err("%s: Invalid action list or in-port", FN);
         RETURN_APP_ERR(app_arg, b, ret, OFPET_BAD_ACTION, OFPBAC_BAD_GENERIC); 
     }
 
@@ -1121,7 +1148,7 @@ static void
 c_app_send_per_flow_info(void *arg, c_fl_entry_t *ent)
 {
     struct c_buf_iter_arg *iter_arg = arg;
-    c_ofp_flow_mod_t            *cofp_fm;
+    c_ofp_flow_info_t           *cofp_fm;
     void                        *act;
     struct cbuf                 *b;
     size_t                      tot_len = 0;
@@ -1150,6 +1177,11 @@ c_app_send_per_flow_info(void *arg, c_fl_entry_t *ent)
     cofp_fm->buffer_id = 0xffffffff;
     cofp_fm->oport = OFPP_NONE;
 
+    cofp_fm->byte_count = htonll(ent->fl_stats.byte_count);
+    cofp_fm->packet_count = htonll(ent->fl_stats.pkt_count);
+    snprintf((char *)cofp_fm->bps, C_FL_XPS_SZ-1, "%lf", ent->fl_stats.bps);
+    snprintf((char *)cofp_fm->pps, C_FL_XPS_SZ-1, "%lf", ent->fl_stats.pps);
+
     act = (void *)(cofp_fm+1);
     memcpy(act, ent->actions, ent->action_len);
 
@@ -1165,7 +1197,9 @@ c_app_per_switch_flow_info(void *k, void *v UNUSED, void *arg)
     c_switch_t  *sw = k;
     struct c_buf_iter_arg *iter_arg = arg;
 
+    c_rd_lock(&sw->lock);
     of_flow_traverse_tbl_all(sw, iter_arg, c_app_send_per_flow_info);
+    c_rd_unlock(&sw->lock);
 }
 
 static void 
@@ -1203,7 +1237,9 @@ c_app_send_flow_info(void *app_arg, struct cbuf *b, bool dump_all)
         return;
     }
 
+    c_rd_lock(&sw->lock);
     of_flow_traverse_tbl_all(sw, &iter_arg, c_app_send_per_flow_info);
+    c_rd_unlock(&sw->lock);
 
     of_switch_put(sw);
 
@@ -1286,6 +1322,7 @@ c_app_send_detail_switch_info(void *app_arg, struct cbuf *b)
                     OFPT_FEATURES_REPLY, 0);
 
     osf = (void *)(b->data);
+    C_ADD_ALIAS_IN_SWADD(osf, sw->alias_id);
     of_switch_detail_info(sw, osf);
     c_rd_unlock(&sw->lock);
     of_switch_put(sw);

@@ -43,7 +43,7 @@ mul_dump_neigh(struct cbuf *b, bool free_buf)
         neigh_switch = ntohs(port->neigh_present) & COFP_NEIGH_SWITCH ? 
                           true: false;
         len += snprintf(pbuf + len, TR_DFL_PBUF_SZ-len-1,
-                    "%12u | %10s | %10llu | %u\r\n",
+                    "%12u | %10s | 0x%10llx | %u\r\n",
                      ntohs(port->port_no), neigh_switch ? "SWITCH" : "EXT",
                      ntohll(port->neigh_dpid), ntohs(port->neigh_port));
         if (len >= TR_DFL_PBUF_SZ-1) {

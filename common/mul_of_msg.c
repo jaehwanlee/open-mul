@@ -142,7 +142,7 @@ of_make_action_set_vlan_pcp(char **pbuf, size_t bufroom, uint8_t vlan_pcp)
 
     assert(sizeof(*vpcp_act) <= bufroom);
 
-    vpcp_act = (void *)(pbuf);
+    vpcp_act = (void *)(*pbuf);
 
     vpcp_act->type = htons(OFPAT_SET_VLAN_PCP);
     vpcp_act->len = htons(sizeof(*vpcp_act));
@@ -391,6 +391,7 @@ of_dump_actions(void *actions, size_t action_len)
                                 "strip-vlan ");
                 assert(len < OF_DUMP_ACT_SZ-1);
                 parsed_len = sizeof(struct ofp_action_header);
+                break;
             }
         case OFPAT_SET_NW_SRC:
             {
@@ -400,6 +401,7 @@ of_dump_actions(void *actions, size_t action_len)
                                 "nw-saddr %s ", inet_ntoa(in_addr));
                 assert(len < OF_DUMP_ACT_SZ-1);
                 parsed_len = sizeof(*nw_addr_act);
+                break;
             }
         case OFPAT_SET_NW_DST:
             {
@@ -409,6 +411,7 @@ of_dump_actions(void *actions, size_t action_len)
                                 "nw-daddr %s ", inet_ntoa(in_addr));
                 assert(len < OF_DUMP_ACT_SZ-1);
                 parsed_len = sizeof(*nw_addr_act);
+                break;
             }
         default:
             {
@@ -542,6 +545,9 @@ of_dump_flow(struct flow *fl, uint32_t wildcards)
         assert(len < FL_PBUF_SZ-1);
     }
 
+    len += snprintf(pbuf+len, FL_PBUF_SZ-len-1,
+                    "\r\n");
+
     return pbuf;
 }
 
@@ -619,6 +625,7 @@ of_flow_correction(struct flow *fl, uint32_t *wc)
 {
     uint16_t eth_proto;
     uint32_t wildcards;
+    uint32_t ip_wc;
 
     if (!fl || !wc) return -1;
 
@@ -627,6 +634,18 @@ of_flow_correction(struct flow *fl, uint32_t *wc)
     if (!(wildcards & OFPFW_IN_PORT) &&
         (!fl->in_port)) {
         return -1;    
+    }
+
+    ip_wc = ((wildcards & OFPFW_NW_DST_MASK) >> OFPFW_NW_DST_SHIFT);
+    if (ip_wc >= 32) {
+        wildcards &= ~OFPFW_NW_DST_MASK;
+        wildcards |= OFPFW_NW_DST_ALL;
+    }
+
+    ip_wc = ((wildcards & OFPFW_NW_SRC_MASK) >> OFPFW_NW_SRC_SHIFT);
+    if (ip_wc >= 32) {
+        wildcards &= ~OFPFW_NW_SRC_MASK;
+        wildcards |= OFPFW_NW_SRC_ALL;
     }
 
     if (!(wildcards & OFPFW_DL_TYPE)) {
@@ -768,7 +787,7 @@ of_prep_flow_del_msg(const struct flow *flow, uint32_t wildcards,
 void * __fastpath
 of_prep_pkt_out_msg(struct of_pkt_out_params *parms)
 {
-    uint8_t               tot_len;
+    size_t                tot_len;
     struct ofp_packet_out *out;
     struct cbuf           *b;
     void                  *data;
@@ -788,6 +807,7 @@ of_prep_pkt_out_msg(struct of_pkt_out_params *parms)
     memcpy(out->actions, parms->action_list, parms->action_len);
     memcpy(data, parms->data, parms->data_len);
 
+
     return b;
 }
 
@@ -805,7 +825,7 @@ of_prep_flow_stat_msg(const struct flow *flow, uint32_t wildcards,
 
     osr->type = htons(OFPST_FLOW);
 
-    ofsr = (void *)(osr + 1);
+    ofsr = (void *)(osr->body);
 
     ofsr->table_id = tbl_id;
     ofsr->out_port = htons(oport?:OFPP_NONE);

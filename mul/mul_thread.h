@@ -41,8 +41,8 @@ typedef enum thread_state
 typedef struct c_per_thread_dat_
 {
     union {
-        GSList              *sw_list;	
-        GSList              *app_list;	
+        GSList          *sw_list;	
+        GSList          *app_list;	
     };
 }c_per_thread_dat_t;
 

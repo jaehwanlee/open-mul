@@ -25,7 +25,7 @@ alloc_ipc_msg(uint8_t ipc_type, uint16_t ipc_msg_type)
 
     switch (ipc_type) {
     case C_IPC_THREAD:
-        ipc_hdr = (void *)malloc(sizeof(struct c_ipc_hdr) +
+        ipc_hdr = (void *)calloc(1, sizeof(struct c_ipc_hdr) +
                                  sizeof(struct c_ipc_thread_msg));
         if (!ipc_hdr) {
             return NULL;

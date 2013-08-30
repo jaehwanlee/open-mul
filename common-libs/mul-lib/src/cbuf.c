@@ -69,6 +69,41 @@ cbuf_list_dequeue(struct cbuf_head *head)
     return curr;
 } 
 
+int
+cbuf_list_count(struct cbuf_head *head)
+{
+    struct cbuf *curr = head->next;
+    struct cbuf *prev = NULL;
+    int len = 0;
+
+    while (curr) {
+        len++;
+        curr = curr->next; 
+    }
+
+    return len;
+} 
+
+void
+cbuf_list_rm_inline_bufs(struct cbuf_head *head)
+{
+    struct cbuf *curr, *new;
+    struct cbuf **prev = &head->next; 
+
+    head->len = 0;
+    while ((curr = *prev)) {
+        if (curr->nofree) {
+            new = cbuf_realloc_headroom(curr, 0, 0);
+            new->next = curr->next;
+            *prev = new;
+            curr = new;
+        } 
+        
+        prev = &curr->next;
+        head->len++;
+    }
+} 
+
 void
 cbuf_list_purge(struct cbuf_head *head)
 {
@@ -79,9 +114,10 @@ cbuf_list_purge(struct cbuf_head *head)
         prev = curr;
         curr = curr->next; 
         head->len--;
-        free(prev);
+        free_cbuf(prev);
     }
 
+    assert(head->len == 0);
     head->next = NULL;
 
 } 
@@ -99,6 +135,8 @@ alloc_cbuf(size_t len)
     b->tail = b->data;
     b->end = (unsigned char *)b + alloc_len; 
     b->len = 0;
+    b->nofree = 0;
+    b->next = NULL;
 
     return b;
 }
@@ -151,23 +189,17 @@ cbuf_headroom(struct cbuf *b)
     return room;
 }
 
-size_t
-cbuf_tailroom(struct cbuf *b)
-{
-    return b->end - b->tail;
-}
-
 struct cbuf *
 cbuf_realloc_tailroom(struct cbuf *b, size_t room, int do_free)
 {
     struct cbuf *old = b;
 
-    if (room < cbuf_tailroom(b)) {
+    if (room > cbuf_tailroom(b)) {
         b = alloc_cbuf(old->len + room);
-        cbuf_put(b, old->len);
         memcpy(b->data, old->data, old->len);
+        cbuf_put(b, old->len);
         if (do_free) 
-            free(old);
+            free_cbuf(old);
     }
 
     return b;
@@ -178,14 +210,13 @@ cbuf_realloc_headroom(struct cbuf *b, size_t room, int do_free)
 {
     struct cbuf *old = b;
 
-    if (1 /*room < cbuf_headroom(b)*/) {
+    if (1 /*room > cbuf_headroom(b)*/) {
         b = alloc_cbuf(old->len + room);
         cbuf_put(b, old->len + room);
         cbuf_pull(b, room);
         memcpy(b->data, old->data, old->len);
-        //printf(" b %p b->data %p b->tail %p b->end %p\n", b, b->data, b->tail, b->end); 
         if (do_free) 
-            free(old);
+            free_cbuf(old);
     }
 
     return b;
@@ -194,5 +225,6 @@ cbuf_realloc_headroom(struct cbuf *b, size_t room, int do_free)
 void
 free_cbuf(struct cbuf *b)
 {
-    free(b);
+    if (!b->nofree)
+        free(b);
 }

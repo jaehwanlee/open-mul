@@ -21,12 +21,85 @@
 cli_struct_t *cli;
 
 /**
+ * nbapi_dump -
+ */
+static void
+nbapi_dump(void *vty_arg, void *buf)
+{
+    int                     sent_sz;
+    struct vty              *vty = vty_arg;
+    int                     retries = 10;
+    nbapi_resp_message_t    *header = buf;
+    int                     buf_len = header->len;
+    
+        
+try_again:
+    sent_sz = send(vty->fd, buf, buf_len, MSG_NOSIGNAL);
+    if (sent_sz <= 0) {
+        if (errno == EINTR) goto retry;
+        goto out;
+    }
+
+    if (sent_sz < buf_len) {
+        buf_len -= sent_sz;
+        buf = (char *)buf + sent_sz;
+        goto retry;
+    }
+
+
+out:
+    free(header);
+    return;
+
+retry:
+    if (retries-- <= 0) {
+        goto out;
+    }
+
+    goto try_again;
+}
+
+/**
+ * nbapi_dump_err -
+ *
+ * Note - err_str will not be freed here
+ */
+static int 
+return_vty(void *vty_arg, uint16_t type, uint16_t status,
+           char *err_str)
+{
+    struct vty *vty = vty_arg;
+    nbapi_resp_config_status_t *resp;
+
+    if (vty->type != VTY_NBAPI) {
+        if (err_str) {
+            vty_out(vty, "%s%s", err_str, VTY_NEWLINE);
+        }
+        return status;
+    }
+
+    resp = calloc(1, sizeof(*resp));
+    if (!resp) {
+        c_log_err("%s: [PANIC] Buf alloc failed", FN);
+        return status;
+    }
+
+    resp->header.type = type;
+    resp->header.len = sizeof(*resp);
+    resp->status = status;
+    
+    nbapi_dump(vty_arg, resp);
+
+    return status; 
+}
+
+/**
  * vty_dump -
  */
 static void
-vty_dump(void *vty, char *pbuf)
+vty_dump(void *vty, void *pbuf)
 {
-    vty_out((struct vty *)vty, "%s", pbuf);
+    vty_out((struct vty *)vty, "%s", (char *)pbuf);
 }
 
 /** 
@@ -95,6 +168,90 @@ mul_fab_service_conn_event(void *service UNUSED, unsigned char conn_event)
     c_log_err("%s: %d", FN, conn_event);
 }
 
+static int
+cli_init_mul_service(cli_struct_t *cli, struct vty *vty)
+{
+     if (!cli->mul_service) {
+        cli->mul_service = mul_app_get_service_notify(MUL_CORE_SERVICE_NAME,
+                                                  mul_core_service_conn_event,
+                                                  false, NULL);
+        if (!cli->mul_service) {
+            if (vty) vty_out(vty, "mul-core service is not alive");
+            return CMD_WARNING;
+        }
+    } else if (!mul_service_available(cli->mul_service)) {
+         if (vty) vty_out(vty, "mul-core service is not alive");
+         return CMD_WARNING;
+    }
+
+    return 0;
+}
+
+static int
+cli_init_fab_service(cli_struct_t *cli, struct vty *vty)
+{
+     if (!cli->fab_service) {
+        cli->fab_service = mul_app_get_service_notify(MUL_FAB_CLI_SERVICE_NAME,
+                                                  mul_fab_service_conn_event,
+                                                  false, NULL);
+        if (!cli->fab_service) {
+            return return_vty(vty, NB_CONFIG_OF_FAB_MODE,
+                              CMD_WARNING, "mul-fab dead");
+        }
+    } else if (!mul_service_available(cli->fab_service)) {
+        return return_vty(vty, NB_CONFIG_OF_FAB_MODE,
+                          CMD_WARNING, "mul-fab dead");
+    }
+
+    return 0;
+}
+
+static int
+cli_init_tr_service(cli_struct_t *cli, struct vty *vty)
+{
+     if (!cli->tr_service) {
+        cli->tr_service = mul_app_get_service_notify(MUL_TR_SERVICE_NAME,
+                                                  mul_tr_service_conn_event,
+                                                  false, NULL);
+        if (!cli->tr_service) {
+            return return_vty(vty, NB_CONFIG_OF_TR_MODE,
+                              CMD_WARNING, "mul-tr dead");
+        }
+    } else if (!mul_service_available(cli->tr_service)) {
+        return return_vty(vty, NB_CONFIG_OF_TR_MODE,
+                          CMD_WARNING, "mul-tr dead");
+    }
+
+    return 0;
+}
+
+static void UNUSED
+cli_exit_mul_service(cli_struct_t *cli)
+{
+    if (cli->mul_service) {
+        mul_app_destroy_service(cli->mul_service);
+        cli->mul_service = NULL;
+    }
+}
+
+static void UNUSED
+cli_exit_fab_service(cli_struct_t *cli)
+{
+    if (cli->fab_service) {
+        mul_app_destroy_service(cli->fab_service);
+        cli->fab_service = NULL;
+    }
+}
+
+static void UNUSED
+cli_exit_tr_service(cli_struct_t *cli)
+{
+    if (cli->tr_service) {
+        mul_app_destroy_service(cli->tr_service);
+        cli->tr_service = NULL;
+    }
+}
+
 
 static void
 cli_timer(evutil_socket_t fd UNUSED, short event UNUSED, void *arg UNUSED)
@@ -126,19 +283,19 @@ cli_module_init(void *base_arg)
 
     cli->mul_service = mul_app_get_service_notify(MUL_CORE_SERVICE_NAME,
                                                   mul_core_service_conn_event,
-                                                  false);
+                                                  false, NULL);
     if (cli->mul_service == NULL) {
         c_log_err("%s:  Mul core service instantiation failed", FN);
     }
     cli->tr_service = mul_app_get_service_notify(MUL_TR_SERVICE_NAME,
                                                  mul_tr_service_conn_event,
-                                                 false);
+                                                 false, NULL);
     if (cli->tr_service == NULL) {
         c_log_err("%s:  Mul TR service instantiation failed", FN);
     }
     cli->fab_service = mul_app_get_service_notify(MUL_FAB_CLI_SERVICE_NAME,
                                                   mul_fab_service_conn_event,
-                                                  false);
+                                                  false, NULL);
     if (cli->fab_service == NULL) {
         c_log_err("%s:  Mul fab service instantiation failed", FN);
     }
@@ -196,14 +353,9 @@ DEFUN (mul_conf,
        "mul-conf",
        "mul-core conf mode\n")
 {
-    if (!cli->mul_service) {
-        cli->mul_service = mul_app_get_service_notify(MUL_CORE_SERVICE_NAME,
-                                                  mul_core_service_conn_event,
-                                                  false); 
-        if (!cli->mul_service) {
-            vty_out(vty, "mul-core service is not alive");
-            return CMD_WARNING; 
-        }
+    if (cli_init_mul_service(cli, vty)) {
+        vty->node = ENABLE_NODE;
+        return CMD_SUCCESS;
     }
 
     vty->node = MUL_NODE;
@@ -215,10 +367,7 @@ DEFUN (mul_conf_exit,
        "exit",
        "Exit mul-core conf mode\n")
 {
-    if (cli->mul_service) {
-        mul_app_destroy_service(cli->mul_service);
-        cli->mul_service = NULL;
-    }
+    /* cli_exit_mul_service(cli); */
     vty->node = ENABLE_NODE;
     return CMD_SUCCESS;
 }
@@ -228,13 +377,10 @@ DEFUN (mul_tr_conf,
        "mul-tr-conf",
        "mul-tr (topo-route) conf mode\n")
 {
-    if (!cli->tr_service) {
-        cli->tr_service = mul_app_get_service_notify(MUL_TR_SERVICE_NAME,
-                                                  mul_tr_service_conn_event,
-                                                  false); 
-        if (!cli->tr_service) {
-            return CMD_WARNING;
-        }
+
+    if (cli_init_tr_service(cli, vty)) {
+        vty->node = ENABLE_NODE;
+        return CMD_SUCCESS;
     }
 
     vty->node = MULTR_NODE;
@@ -246,10 +392,7 @@ DEFUN (mul_tr_conf_exit,
        "exit",
        "Exit mul-tr conf mode\n")
 {
-    if (cli->tr_service) {
-        mul_app_destroy_service(cli->tr_service);
-        cli->tr_service = NULL;
-    }
+    /* cli_exit_tr_service(cli); */
     vty->node = ENABLE_NODE;
     return CMD_SUCCESS;
 }
@@ -260,13 +403,9 @@ DEFUN (mul_fab_conf,
        "mul-fab-conf",
        "mul-fab conf mode\n")
 {
-    if (!cli->fab_service) {
-        cli->fab_service = mul_app_get_service_notify(MUL_FAB_CLI_SERVICE_NAME,
-                                                  mul_fab_service_conn_event,
-                                                  false); 
-        if (!cli->fab_service) {
-            return CMD_WARNING;
-        }
+    if (cli_init_fab_service(cli, vty)) {
+        vty->node = ENABLE_NODE;
+        return CMD_SUCCESS;
     }
 
     vty->node = MULFAB_NODE;
@@ -278,10 +417,7 @@ DEFUN (mul_fab_conf_exit,
        "exit",
        "Exit mul-fab conf mode\n")
 {
-    if (cli->fab_service) {
-        mul_app_destroy_service(cli->fab_service);
-        cli->fab_service = NULL;
-    }
+    /* cli_exit_fab_service(cli); */
     vty->node = ENABLE_NODE;
     return CMD_SUCCESS;
 }
@@ -385,8 +521,13 @@ DEFUN (show_of_switch_flow,
 
     dp_id = strtoull(argv[0], NULL, 16);
 
+    if (cli_init_mul_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
+
     mul_get_flow_info(cli->mul_service, dp_id, false,
-                      false, vty, vty_dump);
+                      false, vty->type == VTY_NBAPI, vty,
+                      vty->type != VTY_NBAPI ? vty_dump : nbapi_dump);
 
     return CMD_SUCCESS;
 }
@@ -399,8 +540,16 @@ DEFUN (show_of_flow_all,
        "Openflow flow tuple\n"
        "On all switches\n")
 {
+    if (vty->type == VTY_NBAPI) {
+        return_vty(vty, NB_UNKNOWN, CMD_WARNING, NULL);
+    }
+
+    if (cli_init_mul_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
+
     mul_get_flow_info(cli->mul_service, 0, false,
-                      false, vty, vty_dump);
+                      false, false, vty, vty_dump);
 
     return CMD_SUCCESS;
 }
@@ -415,10 +564,18 @@ DEFUN (show_of_switch_flow_static,
 {
     uint64_t                    dp_id;
 
+    if (vty->type == VTY_NBAPI) {
+        return_vty(vty, NB_UNKNOWN, CMD_WARNING, NULL);
+    }
+
+    if (cli_init_mul_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
+
     dp_id = strtoull(argv[0], NULL, 16);
 
     mul_get_flow_info(cli->mul_service, dp_id, true,
-                      false, vty, vty_dump);
+                      false, false, vty, vty_dump);
 
     return CMD_SUCCESS;
 }
@@ -430,8 +587,16 @@ DEFUN (show_of_flow_all_static,
        "Openflow flow tuple\n"
        "All static flows\n")
 {
+    if (vty->type == VTY_NBAPI) {
+        return_vty(vty, NB_UNKNOWN, CMD_WARNING, NULL);
+    }
+
+    if (cli_init_mul_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
+
     mul_get_flow_info(cli->mul_service, 0, true,
-                      false, vty, vty_dump);
+                      false, false, vty, vty_dump);
 
     return CMD_SUCCESS;
 }
@@ -1132,8 +1297,11 @@ DEFUN (show_neigh_switch_detail,
     struct cbuf *b;
     char *pbuf = NULL;
 
-    dpid = strtoull(argv[0], NULL, 16);
+    if (cli_init_tr_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
 
+    dpid = strtoull(argv[0], NULL, 16);
 
     vty_out (vty,
             "-------------------------------------------"
@@ -1184,8 +1352,10 @@ __add_fab_host_cmd(struct vty *vty, const char **argv, bool is_gw)
 
     ret = str2prefix(argv[2], (void *)&host_ip);
     if (ret <= 0) {
-        vty_out(vty, "Malformed address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        return return_vty(vty, 
+                          is_gw ? NB_CONFIG_OF_FAB_HOST_GW :
+                                  NB_CONFIG_OF_FAB_HOST_NONGW,
+                          CMD_WARNING, "Malformed address");
     }
 
     fl.nw_src = host_ip.prefix.s_addr;
@@ -1202,16 +1372,24 @@ __add_fab_host_cmd(struct vty *vty, const char **argv, bool is_gw)
     }
 
     if (i != 6) {
-        vty_out(vty, "Malformed mac-address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        return return_vty(vty, 
+                          is_gw ? NB_CONFIG_OF_FAB_HOST_GW :
+                                  NB_CONFIG_OF_FAB_HOST_NONGW,
+                          CMD_WARNING, "Malformed address");
     }
 
     if (mul_fabric_host_mod(cli->fab_service, dpid, &fl, true)) {
-        vty_out(vty, "Host-add failed %s", VTY_NEWLINE);
-        return CMD_WARNING;
+        return return_vty(vty,
+                          is_gw ? NB_CONFIG_OF_FAB_HOST_GW :
+                                  NB_CONFIG_OF_FAB_HOST_NONGW,
+                          CMD_WARNING, "Host add failed");
     }
 
-    return CMD_SUCCESS;
+    return return_vty(vty,
+                      is_gw ? NB_CONFIG_OF_FAB_HOST_GW :
+                                  NB_CONFIG_OF_FAB_HOST_NONGW,
+                      CMD_SUCCESS, NULL);
+
 }
 
 DEFUN (add_fab_host_nongw,
@@ -1292,8 +1470,9 @@ DEFUN (del_fab_host,
 
     ret = str2prefix(argv[2], (void *)&host_ip);
     if (ret <= 0) {
-        vty_out(vty, "Malformed address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        return return_vty(vty,
+                          NB_CONFIG_OF_FAB_HOST_DEL,
+                          CMD_WARNING, "Malformed address");
     }
 
     fl.nw_src = host_ip.prefix.s_addr;
@@ -1309,16 +1488,20 @@ DEFUN (del_fab_host,
     }
 
     if (i != 6) {
-        vty_out(vty, "Malformed mac-address%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        return return_vty(vty,
+                          NB_CONFIG_OF_FAB_HOST_DEL,
+                          CMD_WARNING, "Malformed mac address");
     }
 
     if (mul_fabric_host_mod(cli->fab_service, 0, &fl, false)) {
-        vty_out(vty, "Host delete failed%s", VTY_NEWLINE);
-        return CMD_WARNING;
+        return return_vty(vty,
+                          NB_CONFIG_OF_FAB_HOST_DEL,
+                          CMD_WARNING, "Host delete failed");
     }
 
-    return CMD_SUCCESS;
+    return return_vty(vty,
+                      NB_CONFIG_OF_FAB_HOST_DEL,
+                      CMD_SUCCESS, NULL);
 }
 
 DEFUN (show_fab_host_all_active,
@@ -1333,6 +1516,10 @@ DEFUN (show_fab_host_all_active,
             "-------------------------------------------"
             "----------------------------------%s",
             VTY_NEWLINE);
+
+    if (cli_init_fab_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
 
     mul_fabric_show_hosts(cli->fab_service, true, false,
                           (void *)vty, vty_dump);
@@ -1358,6 +1545,10 @@ DEFUN (show_fab_host_all_inactive,
             "-------------------------------------------"
             "----------------------------------%s",
             VTY_NEWLINE);
+
+    if (cli_init_fab_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
 
     mul_fabric_show_hosts(cli->fab_service, false, false,
                           (void *)vty, vty_dump);
@@ -1418,6 +1609,10 @@ DEFUN (show_fab_route_all,
        SHOW_STR
        "Dump all routes\n")
 {
+
+    if (cli_init_fab_service(cli, vty)) {
+        return CMD_SUCCESS;
+    }
 
     mul_fabric_show_routes(cli->fab_service, vty, vty_src_host_dump,
                            vty_dst_host_dump, vty_route_dump);

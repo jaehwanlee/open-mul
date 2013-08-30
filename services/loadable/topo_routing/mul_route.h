@@ -54,6 +54,7 @@ struct rt_path_elem_
 #define RT_PELEM_FIRST_HOP 0x1
 #define RT_PELEM_LAST_HOP 0x2
     uint8_t flags;
+    uint16_t in_port;
     lweight_pair_t link;
 };
 typedef struct rt_path_elem_ rt_path_elem_t;

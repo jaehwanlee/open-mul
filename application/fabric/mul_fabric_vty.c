@@ -44,7 +44,8 @@ DEFUN (show_fab_route,
     src_aliasid = atoi(argv[0]);
     dst_aliasid = atoi(argv[1]);
 
-    iroute = mul_route_get(fab_ctx->route_service, src_aliasid, dst_aliasid);
+    iroute = fab_route_get(fab_ctx->route_service, src_aliasid, dst_aliasid,
+                           NULL);
     if (!iroute) {
         vty_out(vty, "No route found%s", VTY_NEWLINE);
         return CMD_SUCCESS;         
@@ -111,7 +112,7 @@ __add_fab_host_cmd(struct vty *vty, const char **argv, bool is_gw)
         return CMD_WARNING;
     }
 
-    fab_host_add(fab_ctx, dpid, &fl);
+    fab_host_add(fab_ctx, dpid, &fl, true);
 
     return CMD_SUCCESS;
 
@@ -269,7 +270,7 @@ DEFUN (del_fab_host,
         return CMD_WARNING;
     }
 
-    fab_host_delete(fab_ctx, &fl, false, false);
+    fab_host_delete(fab_ctx, &fl, false, false, true);
 
     return CMD_SUCCESS;
 }
@@ -389,6 +390,34 @@ DEFUN (show_fab_host_all_inactive,
 
     return CMD_SUCCESS;
 }
+
+DEFUN (fab_route_mp,
+       fab_route_mp_cmd,
+        "fabric-route-mp enable",
+        "Fabric route multi-path attributes\n" 
+        "Enable this feature\n")
+{
+    if (!fab_ctx->use_ecmp) {
+        fab_ctx->use_ecmp = true;
+        fab_reset_all_routes(fab_ctx);
+    }
+
+    return CMD_SUCCESS;
+}
+
+DEFUN (fab_route_mp_dis,
+       fab_route_mp_dis_cmd,
+        "fabric-route-mp disable",
+        "Fabric route multi-path attributes\n" 
+        "Disable this feature\n")
+{
+    if (fab_ctx->use_ecmp) {
+        fab_ctx->use_ecmp = false;
+        fab_reset_all_routes(fab_ctx);
+    }
+
+    return CMD_SUCCESS;
+}
  
 /* install available commands */
 void
@@ -404,4 +433,6 @@ fabric_vty_init(void *arg UNUSED)
     install_element(ENABLE_NODE, &show_fab_host_cmd);
     install_element(ENABLE_NODE, &show_fab_host_all_active_cmd);
     install_element(ENABLE_NODE, &show_fab_host_all_inactive_cmd);
+    install_element(ENABLE_NODE, &fab_route_mp_cmd);
+    install_element(ENABLE_NODE, &fab_route_mp_dis_cmd);
 }

@@ -164,7 +164,7 @@ fab_dump_single_host_from_flow(uint64_t dpid, struct flow *fl)
                     fl->dl_src[0], fl->dl_src[1],
                     fl->dl_src[2], fl->dl_src[3],
                     fl->dl_src[4], fl->dl_src[5],
-                    dpid,
+                    (unsigned long long)dpid,
                     ntohs(fl->in_port),
                     fl->FL_DFL_GW ? "dfl-gw" : "non-gw");
     assert(len < HOST_PBUF_SZ-1);

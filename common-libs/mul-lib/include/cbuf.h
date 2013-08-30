@@ -29,8 +29,9 @@ struct cbuf
     unsigned char *end;
     size_t        len;
     struct cbuf   *next;
-    unsigned long cloned:8;
-    unsigned long res:24;
+    unsigned long nofree;
+    unsigned long cloned;
+    unsigned long res;
 };
 
 struct cbuf_head
@@ -42,6 +43,7 @@ struct cbuf_head
 #define CBUF_SZ             (sizeof(struct cbuf))
 #define CBUF_BLK_ALIGN_SZ  (64)
 #define CBUF_ALIGN_SZ(len) (((len) + (CBUF_BLK_ALIGN_SZ-1))&(~(CBUF_BLK_ALIGN_SZ-1)))
+#define CBUF_DATA(b) ((void *)(b->data))
 
 static inline int
 cbuf_list_queue_len(struct cbuf_head *head)
@@ -62,11 +64,76 @@ void cbuf_list_purge(struct cbuf_head *head);
 struct cbuf *alloc_cbuf(size_t len);
 void *cbuf_put(struct cbuf *b, size_t len);    
 size_t cbuf_headroom(struct cbuf *b);
-size_t cbuf_tailroom(struct cbuf *b);
 struct cbuf *cbuf_realloc_tailroom(struct cbuf *b, size_t room, int do_free);
 struct cbuf *cbuf_realloc_headroom(struct cbuf *b, size_t room, int do_free);
 void *cbuf_pull(struct cbuf *b, size_t len);
 void *cbuf_push(struct cbuf *b, size_t len);
 void free_cbuf(struct cbuf *b);
+void cbuf_list_rm_inline_bufs(struct cbuf_head *head);
+
+static inline void *
+cbuf_put_inline(struct cbuf *b, size_t len)
+{
+    void *tmp = b->tail;
+
+    assert(b->tail+len <= b->end);
+
+    b->tail += len;
+    b->len  += len;
+
+    return tmp;
+}
+
+static inline void *
+cbuf_pull_inline(struct cbuf *b, size_t len)
+{
+    assert(b->data + len <= b->end);
+
+    b->data += len;
+    b->len -= len;
+
+    return (void *)(b->data);
+}
+
+static inline void *
+cbuf_push_inline(struct cbuf *b, size_t len)
+{
+    assert(cbuf_headroom(b) >= len);
+
+    b->data -= len;
+    b->len += len;
+
+    return (void *)(b->data);
+}
+
+static inline size_t
+cbuf_headroom_inline(struct cbuf *b)
+{
+    int room;
+
+    assert(b && b->data);
+
+    room = (b->data - (unsigned char *)b) + CBUF_SZ;
+    if (room < 0) return 0;
+
+    return room;
+}
+
+static inline size_t
+cbuf_tailroom(struct cbuf *b)
+{
+    return b->end - b->tail;
+}
+
+static inline
+void cbuf_init_on_stack(struct cbuf *b, void *data, size_t alloc_len)
+{
+    b->data = (unsigned char *)(data);
+    b->tail = (unsigned char *)(data) + alloc_len;
+    b->end = b->tail;
+    b->len = alloc_len;
+    b->next = NULL;
+    b->nofree = 1;
+}
 
 #endif

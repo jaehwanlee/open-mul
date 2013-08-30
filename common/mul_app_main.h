@@ -20,7 +20,9 @@
 #define __MUL_APP_MAIN_H___
 
 #define C_APP_RCV_BUF_SZ 4096
+#define C_APP_PATH_LEN 64
 #define C_APP_VTY_COMMON_PATH "/var/run/app_"
+#define C_APP_PID_COMMON_PATH "/var/run/mul_app"
 
 struct c_app_hdl_
 {

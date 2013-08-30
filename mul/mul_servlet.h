@@ -29,8 +29,8 @@ struct cbuf *mul_get_switch_detail(void *service, uint64_t dpid);
 void *mul_nbapi_dump_switch_brief(struct cbuf *b, bool free_buf);
 char *mul_dump_switches_brief(struct cbuf *b, bool free_buf);
 char *mul_dump_switch_detail(struct cbuf *b, bool free_buf);
-void mul_get_flow_info(void *service, uint64_t dpid, bool flow_self,
-                  bool dump_cmd, void *arg,
-                  void (*cb_fn)(void *arg, char *pbuf));
+int mul_get_flow_info(void *service, uint64_t dpid, bool flow_self,
+                  bool dump_cmd, bool nbapi_cmd, void *arg,
+                  void (*cb_fn)(void *arg, void *pbuf));
 
 #endif

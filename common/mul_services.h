@@ -34,6 +34,7 @@
 #define MUL_ROUTE_SERVICE_NAME    "mul-route"
 #define MUL_FAB_CLI_SERVICE_NAME  "mul-fab-cli"
 #define MUL_CORE_SERVICE_NAME     "mul-core"
+#define MUL_CORE_HA_SERVICE_NAME  "mul-ha-serv"
 
 #define MAX_SWITCHES_PER_CLUSTER  (128)
 
@@ -42,6 +43,7 @@
 
 #define MUL_TR_SERVICE_PORT 12345 
 #define MUL_FAB_CLI_PORT 12346 
+#define MUL_CORE_HA_SERVICE_PORT 12347
 
 #define C_SERV_RCV_BUF_SZ 4096
 
@@ -49,6 +51,7 @@ struct mul_service
 {
 #define MAX_SERV_NAME_LEN 64
     char service_name[MAX_SERV_NAME_LEN];
+    const char *server;
     uint16_t serv_port;
     c_conn_t conn;
     bool is_client;
@@ -56,9 +59,11 @@ struct mul_service
     struct event *reconn_timer_event;
     struct event *valid_timer_event;
     void (*ev_cb)(void *service, struct cbuf *buf);
+    void *ctx_arg;
 #define MUL_SERVICE_UP (0)
 #define MUL_SERVICE_DOWN (1)
     void (*conn_update)(void *service, unsigned char conn_event);
+    bool (*keepalive)(void *service);
     void *priv;
 };
 typedef struct mul_service mul_service_t;
@@ -66,24 +71,26 @@ typedef struct mul_service mul_service_t;
 static inline bool
 mul_service_available(mul_service_t *service)
 {
-    return !service->conn.dead;
+    return service && !service->conn.dead;
 }
 
 struct cbuf   *c_service_wait_response(mul_service_t *service);
 int           c_service_timed_throw_resp(mul_service_t *service);
 void          c_service_send(mul_service_t *service, struct cbuf *b);
 void          c_service_reconnect(mul_service_t *service);
-mul_service_t *mul_service_start(void *base, const char *name, uint16_t service_port,
-                                void (*service_handler)(void *service, 
-                                                        struct cbuf *msg));
+mul_service_t *mul_service_start(void *base, const char *name,
+                                 uint16_t service_port,
+                                 void (*service_handler)(void *service, 
+                                                         struct cbuf *msg),
+                                 void *ctx_arg);
 mul_service_t *mul_service_instantiate(void *base, const char *name,
                                        uint16_t service_port,
                                        void (*conn_update)(void *service,
-                                                           unsigned char conn_event),
-                                       bool retry_conn);
+                                                  unsigned char conn_event),
+                                       bool (*keepalive)(void *service),
+                                       bool retry_conn, const char *server);
 void mul_service_destroy(mul_service_t *service);
 bool mul_service_alive(mul_service_t *service);
-
-
+int mul_app_ha_proc(mul_service_t *service UNUSED, struct cbuf *b);
 
 #endif

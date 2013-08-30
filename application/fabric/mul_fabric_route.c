@@ -21,6 +21,68 @@
 extern fab_struct_t *fab_ctx;
 
 /**
+ * fab_route_elem_valid - 
+ *
+ * Check if a fabric route elem is valid
+ */
+static int 
+fab_route_elem_valid(void *rt_path_arg, void *route_arg)
+{
+    rt_path_elem_t *rt_elem = rt_path_arg;
+    fab_switch_t *sw;
+    fab_route_t *froute = route_arg;
+
+    sw = __fab_switch_get_with_alias(fab_ctx, rt_elem->sw_alias);
+    if (!sw) {
+        goto route_inv_switch;
+    }
+
+    if ((rt_elem->flags & RT_PELEM_LAST_HOP)) {
+        if (!fab_port_valid(fab_ctx, sw, froute->dst->sw.port)) {
+            goto route_inv_port;
+        }
+    } else {
+        if (!fab_port_up(fab_ctx, sw, rt_elem->link.la)) {
+            goto route_inv_port;
+        }
+    }
+
+    fab_switch_put_locked(sw);
+
+    return 0;
+
+route_inv_port:
+    fab_switch_put_locked(sw);
+route_inv_switch:
+    c_log_err("%s: Route elem err", FN);
+    return -1;
+}
+
+/**
+ * fab_route_get -
+ *
+ * Get a fabric route
+ */
+GSList *
+fab_route_get(void *rt_service, int src_sw, int dst_sw,
+              fab_route_t *froute)
+{
+    GSList *route = NULL;
+    assert(froute);
+
+    if (!(route = mul_route_get(rt_service, src_sw, dst_sw))) {
+        return NULL;
+    } 
+
+    if (!g_slist_find_custom(route, froute, (GCompareFunc)fab_route_elem_valid)) {
+        mul_destroy_route(route);
+        return NULL;
+    }
+    
+    return route;
+}
+
+/**
  * fab_route_from_host_cmp - 
  *
  * Check whether route originates from a host 
@@ -31,7 +93,9 @@ fab_route_from_host_cmp(void *route_elem, void *h_arg)
     fab_route_t *froute = route_elem;
     fab_host_t *host = h_arg;
 
-    if (host == froute->src) return 0; 
+    if (host == froute->src) {
+        return 0; 
+    }
 
     return 1;
 } 
@@ -63,8 +127,10 @@ fab_dump_single_pending_route(void *route, void *arg UNUSED)
     fab_route_t *froute = route;
 
     c_log_debug("%s: Pending route between (0x%llx:%d -Port(%u)) -> (0x%llx:%d - Port (%u))",
-                FN, froute->src->sw.swid, froute->src->sw.alias , froute->src->sw.port,
-                froute->dst->sw.swid, froute->dst->sw.alias, froute->dst->sw.port);
+                FN, (unsigned long long)(froute->src->sw.swid),
+                froute->src->sw.alias , froute->src->sw.port,
+                (unsigned long long)(froute->dst->sw.swid),
+                froute->dst->sw.alias, froute->dst->sw.port);
 }
 
 /**
@@ -95,7 +161,8 @@ fab_route_elem_oport_cmp(void *rt_path_arg, void *sw_arg)
     rt_path_elem_t *rt_elem = rt_path_arg;
     fab_host_sw_t  *sw = sw_arg;
 
-    if (rt_elem->sw_alias == sw->alias &&
+    if (!(rt_elem->flags & RT_PELEM_LAST_HOP) &&
+        rt_elem->sw_alias == sw->alias &&
         rt_elem->link.la == sw->port) {
         c_log_err("%s: Match", FN);
         return 0;
@@ -103,6 +170,7 @@ fab_route_elem_oport_cmp(void *rt_path_arg, void *sw_arg)
 
     return 1;
 }
+
 
 /**
  * fab_per_switch_route_install- 
@@ -118,24 +186,36 @@ fab_per_switch_route_install(void *rt, void *u_arg)
     fab_route_t                 *froute = u_arg;
     uint8_t                     *actions, *pactions;
     size_t                      action_len = sizeof(struct ofp_action_output);
-    uint16_t                    out_port;
+    uint16_t                    out_port, in_port;
     uint16_t                    tenant_id;
     bool                        fhop, lhop; 
     bool                        add_pkt_tenant = false, strip_pkt_tenant = false;
+    bool                        set_dmac_lhop = false;
+    char                        *fl_str;
+    fab_switch_t                *sw; 
 
-    c_log_err("%s: ", FN);
+    sw = __fab_switch_get_with_alias(fab_ctx, rt_elem->sw_alias);
+    if (!sw) {
+        c_log_err("%s: switch cant be found", FN);
+        return;
+    }
+    c_log_debug("%s: 0x%x to 0x%x:(Switch 0x%llx)", FN, froute->src->hkey.host_ip, 
+                froute->dst->hkey.host_ip, (unsigned long long)sw->dpid);
+    fab_switch_put_locked(sw);
 
     lhop = rt_elem->flags & RT_PELEM_LAST_HOP ? true: false;
     fhop = rt_elem->flags & RT_PELEM_FIRST_HOP ? true: false;
 
     tenant_id = fab_tnid_to_tid(froute->src->hkey.tn_id);
     out_port = lhop ? froute->dst->sw.port : rt_elem->link.la;
+    in_port = fhop ? froute->src->sw.port : rt_elem->in_port;
 
     /* 
-     * Update the last hop oport in the route
+     * Update the last hop oport and first hop iport in the route
      * This is not accomplshed by route-service 
      */
     rt_elem->link.la = out_port;
+    rt_elem->in_port = in_port;
 
     if (tenant_id) {
         if (lhop && fhop) { 
@@ -150,10 +230,20 @@ fab_per_switch_route_install(void *rt, void *u_arg)
         } else {
             /* Last hop */
             action_len += sizeof(struct ofp_action_header); 
+#ifdef CONFIG_HAVE_PROXY_ARP
+            action_len += sizeof(struct ofp_action_dl_addr);
+#endif
             strip_pkt_tenant = true;
         } 
 
         fab_add_tenant_id(&froute->rt_flow, &froute->rt_wildcards, tenant_id);
+    } else {
+#ifdef CONFIG_HAVE_PROXY_ARP
+        if (lhop) {
+            action_len += sizeof(struct ofp_action_dl_addr);    
+            set_dmac_lhop = true;
+        }
+#endif
     }
 
 apply_route:
@@ -169,30 +259,54 @@ apply_route:
         of_make_action_strip_vlan((char **)&pactions,
                           sizeof(struct ofp_action_header));
         pactions += sizeof(struct ofp_action_header);
+#ifdef CONFIG_HAVE_PROXY_ARP
+        of_make_action_set_dmac((char **)&pactions,
+                          sizeof(struct ofp_action_dl_addr),
+                          froute->dst->hkey.host_mac);
+        pactions += sizeof(struct ofp_action_dl_addr);
+#endif
+    } else if (set_dmac_lhop) {
+#ifdef CONFIG_HAVE_PROXY_ARP
+        of_make_action_set_dmac((char **)&pactions,
+                          sizeof(struct ofp_action_dl_addr),
+                          froute->dst->hkey.host_mac);
+        pactions += sizeof(struct ofp_action_dl_addr);
+#endif
     }
 
     of_make_action_output((char **)&pactions,
                           sizeof(struct ofp_action_output),
-                          out_port);
+                          in_port == out_port ? OFPP_IN_PORT : out_port);
+
+    froute->rt_flow.in_port = htons(in_port);
+    froute->rt_wildcards &= ~(OFPFW_IN_PORT);
+
+    fl_str = of_dump_flow(&froute->rt_flow, htonl(froute->rt_wildcards));
+    c_log_debug("%s", fl_str);
+    free(fl_str);
 
     mul_app_send_flow_add(FAB_APP_NAME, NULL, (uint64_t)(rt_elem->sw_alias), 
                           &froute->rt_flow, FAB_UNK_BUFFER_ID,
                           actions, action_len, 
                           0, 0, froute->rt_wildcards,
-                          froute->prio, C_FL_ENT_SWALIAS);
-
+                          froute->prio, C_FL_ENT_SWALIAS | C_FL_ENT_GSTATS);
+#ifndef CONFIG_HAVE_PROXY_ARP
     froute->rt_flow.dl_type = ntohs(ETH_TYPE_ARP);
     mul_app_send_flow_add(FAB_APP_NAME, NULL, (uint64_t)(rt_elem->sw_alias), 
                           &froute->rt_flow, FAB_UNK_BUFFER_ID,
                           actions, action_len, 
                           0, 0, froute->rt_wildcards,
-                          froute->prio, C_FL_ENT_SWALIAS);
+                          froute->prio, C_FL_ENT_SWALIAS | C_FL_ENT_GSTATS);
+#endif
 
     /* Reset flow modifications if any */
-    froute->rt_flow.dl_type = ntohs(ETH_TYPE_IP);
+    froute->rt_flow.dl_type = htons(ETH_TYPE_IP);
     if (tenant_id) {
         fab_reset_tenant_id(&froute->rt_flow, &froute->rt_wildcards);
     }
+
+    froute->rt_flow.in_port = 0;
+    froute->rt_wildcards |= OFPFW_IN_PORT;
 }
 
 /**
@@ -209,14 +323,29 @@ fab_per_switch_route_uninstall(void *rt, void *u_arg)
     fab_route_t      *froute = u_arg;
     uint16_t         tenant_id = fab_tnid_to_tid(froute->src->hkey.tn_id);       
     bool             fhop;
+    char             *fl_str;
+    fab_switch_t     *sw;
 
-
-    c_log_debug("%s: ", FN);
+    sw = __fab_switch_get_with_alias(fab_ctx, rt_elem->sw_alias);
+    if (!sw) {
+        c_log_err("%s: switch cant be found", FN);
+        return;
+    }
+    c_log_debug("%s: 0x%x to 0x%x:(Switch 0x%llx)", FN, froute->src->hkey.host_ip,
+                froute->dst->hkey.host_ip, (unsigned long long)sw->dpid);
+    fab_switch_put_locked(sw);
 
     fhop = rt_elem->flags & RT_PELEM_FIRST_HOP ? true: false;
     if (tenant_id && !fhop) {
          fab_add_tenant_id(&froute->rt_flow, &froute->rt_wildcards, tenant_id);
     }
+
+    froute->rt_flow.in_port = htons(rt_elem->in_port);
+    froute->rt_wildcards &= ~(OFPFW_IN_PORT);
+
+    fl_str = of_dump_flow(&froute->rt_flow, htonl(froute->rt_wildcards));
+    c_log_debug("%s", fl_str);
+    free(fl_str);
 
     mul_app_send_flow_del(FAB_APP_NAME, NULL, (uint64_t)(rt_elem->sw_alias),
                           &froute->rt_flow, froute->rt_wildcards, OFPP_NONE, 
@@ -233,6 +362,9 @@ fab_per_switch_route_uninstall(void *rt, void *u_arg)
     if (tenant_id && !fhop) {
         fab_reset_tenant_id(&froute->rt_flow, &froute->rt_wildcards);
     }
+
+    froute->rt_flow.in_port = 0;
+    froute->rt_wildcards |= OFPFW_IN_PORT;
 }
 
 /**
@@ -245,8 +377,8 @@ static void
 fab_route_install(fab_route_t *froute)
 {
     froute->flags &= ~FAB_ROUTE_DIRTY;
-    mul_route_path_traverse(froute->iroute, fab_per_switch_route_install, 
-                            froute); 
+    mul_route_path_traverse(froute->iroute, fab_per_switch_route_install,
+                            froute);
 }
 
 /**
@@ -390,9 +522,10 @@ restart:
                   FN, froute->src->hkey.host_ip, froute->dst->hkey.host_ip);
 
 
-           if ((froute->iroute = mul_route_get(fab_ctx->route_service,
+           if ((froute->iroute = fab_route_get(fab_ctx->route_service,
                                            froute->src->sw.alias, 
-                                           froute->dst->sw.alias)) ||
+                                           froute->dst->sw.alias,
+                                           froute)) ||
                 froute->src->dead || froute->dst->dead) {
 
                 if (!froute->src->dead && !froute->dst->dead) {
@@ -473,24 +606,27 @@ fab_mkroute(fab_host_t *src, fab_host_t *dst)
     }
 
     if (!src->dfl_gw) {
-        froute->rt_flow.nw_src = ntohl(src->hkey.host_ip);
+        froute->rt_flow.nw_src = htonl(src->hkey.host_ip);
         froute->rt_wildcards &= ~(OFPFW_NW_SRC_MASK);
     }
 
     if (!dst->dfl_gw) {
-        froute->rt_flow.nw_dst = ntohl(dst->hkey.host_ip);
+        froute->rt_flow.nw_dst = htonl(dst->hkey.host_ip);
         froute->rt_wildcards &= ~(OFPFW_NW_DST_MASK);
     }
 
-    froute->rt_flow.dl_type = ntohs(ETH_TYPE_IP);
+    froute->rt_flow.dl_type = htons(ETH_TYPE_IP);
     froute->rt_wildcards &= ~(OFPFW_DL_TYPE);
 
-    froute->iroute = mul_route_get(fab_ctx->route_service,
-                                   src->sw.alias, dst->sw.alias);
+    froute->iroute = fab_route_get(fab_ctx->route_service,
+                                   src->sw.alias, dst->sw.alias,
+                                   froute);
     if (!froute->iroute) {
         c_log_err("%s: No host route src(0x%x)[0x%llx:%d]->dst(0x%x)[0x%llx:%d]",
-                  FN, src->hkey.host_ip, src->sw.swid, src->sw.alias, 
-                  dst->hkey.host_ip, dst->sw.swid, dst->sw.alias);
+                  FN, src->hkey.host_ip, (unsigned long long)(src->sw.swid),
+                  src->sw.alias, dst->hkey.host_ip, 
+                  (unsigned long long)(dst->sw.swid),
+                  dst->sw.alias);
         __fab_add_to_pending_routes(fab_ctx, froute);
         //fab_zaproute(froute);
         return NULL;
@@ -560,12 +696,18 @@ fab_host_route_add(fab_host_t *src, fab_host_t *dst)
 {
     fab_route_t *froute;
 
-    if (src == dst) {
+    if (src == dst ||
+        src->dead ||
+        dst->dead) {
         return -1;
     }
+
+    c_log_err("%s: Adding route betweem 0x%x -> 0x%x",
+              FN, src->hkey.host_ip, dst->hkey.host_ip);
     
     froute = fab_mkroute(src, dst);
     if (froute) {
+        /* FIXME - Check for duplicates */
         c_wr_lock(&dst->lock);
         dst->host_routes = g_slist_append(dst->host_routes, froute);
         fab_route_install(froute);
@@ -649,8 +791,9 @@ fab_host_per_tenant_nw_delete_route(void *elem_host, void *arg_host)
                                    (GCompareFunc)fab_route_from_host_cmp);
     if (!iterator) {
         c_log_err("%s: No host route between (0x%llx:%d) -> (0x%llx:%d)",
-                  FN, del_host->sw.swid, del_host->sw.alias,
-                  host->sw.swid, host->sw.alias);
+                  FN, (unsigned long long)(del_host->sw.swid),
+                  del_host->sw.alias,
+                  (unsigned long long)(host->sw.swid), host->sw.alias);
         c_wr_unlock(&host->lock);
         return;
     }
@@ -666,6 +809,7 @@ fab_host_per_tenant_nw_delete_route(void *elem_host, void *arg_host)
 /**
  * __fab_routes_tofro_host_add - 
  * @host_arg : Fabric host pointer
+ * @key_arg : Unused arg
  * @u_arg : User arg whether to install pair routes or not 
  *
  * Add host routes from all other hosts of same tenant network
@@ -673,7 +817,7 @@ fab_host_per_tenant_nw_delete_route(void *elem_host, void *arg_host)
  * to invocation 
  */
 void
-__fab_routes_tofro_host_add(void *host_arg, void *u_arg)
+__fab_routes_tofro_host_add(void *host_arg, void *key_arg UNUSED, void *u_arg)
 {
     fab_host_t *host = host_arg;
     bool install_pair = *(bool *)u_arg;
@@ -703,6 +847,7 @@ __fab_host_route_del_with_port(void *host_arg, void *key_arg UNUSED,
     GSList *iterator;
     fab_route_t *froute;
 
+find_route:
     c_wr_lock(&host->lock);
     iterator = g_slist_find_custom(host->host_routes,
                                    sw_arg,
@@ -721,16 +866,17 @@ __fab_host_route_del_with_port(void *host_arg, void *key_arg UNUSED,
     mul_destroy_route(froute->iroute);
     froute->iroute = NULL;
 
-    usleep(10000); /* 10ms breather to routing */
-    fab_host_per_tenant_nw_add_route(froute->src, froute->dst);
-    fab_zaproute(froute);
-
+    if (froute->src->sw.swid != froute->dst->sw.swid) { 
+        fab_host_per_tenant_nw_add_route(froute->src, froute->dst);
+        fab_zaproute(froute);
+    } else {
+        __fab_add_to_pending_routes(fab_ctx, froute);
+    }
     /*
      * Place a call to __fab_add_to_pending_routes(fab_ctx, froute);
      * instead of above 2 lines if there is no hurry to recalc new route
      */
-
-    return;
+    goto find_route;
 }
 
 
@@ -757,9 +903,11 @@ __fab_host_route_delete(void *host_arg, void *v_arg UNUSED, void *ctx_arg UNUSED
 
     c_wr_unlock(&host->lock);
 
-    __fab_tenant_nw_loop_all_hosts(host->tenant_nw, 
+    if (host->tenant_nw) {
+        __fab_tenant_nw_loop_all_hosts(host->tenant_nw, 
                                    fab_host_per_tenant_nw_delete_route,
                                    host);
+    }
 }
 
 /**
@@ -806,6 +954,9 @@ fab_delete_routes_with_port(fab_struct_t *fab_ctx, int sw_alias, uint16_t port_n
     sw.alias = sw_alias;
     sw.port  = port_no;
 
+    c_log_err("%s", FN);
+
+    usleep(20000); /* 20ms breather to routing */
     fab_loop_all_hosts_wr(fab_ctx, (GHFunc)__fab_host_route_del_with_port, &sw);
 }
 
@@ -822,6 +973,7 @@ fab_route_per_sec_timer(fab_struct_t *fab_ctx)
 
     if (fab_ctx->rt_recalc_pending && 
         curr_ts > fab_ctx->rt_recalc_ts) {
+        c_log_debug("%s: Recalc all host routes", FN);
         fab_ctx->rt_recalc_pending = false;
         fab_add_all_routes(fab_ctx);
     } 

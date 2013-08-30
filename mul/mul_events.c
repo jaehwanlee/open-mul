@@ -18,10 +18,11 @@
  */
 #include "mul.h"
 
-void c_worker_do_switch_del(struct c_worker_ctx *c_wrk_ctx,
-                            c_switch_t *sw);
-void c_worker_do_app_del(struct c_app_ctx *c_app_ctx,
-                         c_app_info_t *app);
+void c_worker_do_switch_del(struct c_worker_ctx *c_wrk_ctx, c_switch_t *sw);
+void c_worker_do_app_del(struct c_app_ctx *c_app_ctx, c_app_info_t *app);
+void c_worker_do_switch_zap(struct c_worker_ctx *c_wrk_ctx, c_switch_t *sw);
+
+static void c_switch_events_add(c_switch_t *sw);
 
 void
 c_write_event_sched(void *conn_arg)
@@ -31,34 +32,85 @@ c_write_event_sched(void *conn_arg)
 }
 
 static void
+c_per_virt_sw_timer(c_switch_t *sw, time_t ctime)
+{
+    time_t                time_diff;
+
+    if (sw->switch_state & SW_DEAD) {
+        c_log_err("%s: Switch marked dead", FN);
+        time_diff = ctime - sw->last_refresh_time;
+        if (time_diff > C_SWITCH_ECHO_TIMEO) {
+            return c_worker_do_switch_zap(sw->ctx, sw);
+        }
+
+        return;
+    } else if (sw->switch_state & SW_REINIT ||
+               sw->switch_state & SW_REINIT_VIRT) {
+        c_log_err("%s: Switch marked for reinit", FN);
+        c_conn_destroy(&sw->conn);
+        c_conn_assign_fd(&sw->conn, sw->reinit_fd);
+        sw->reinit_fd = 0;
+        c_switch_events_add(sw);
+        if (sw->switch_state & SW_REINIT) {
+            sw->ha_state = SW_HA_NONE;
+            c_per_switch_flow_resync_hw(sw, NULL, NULL);
+        }
+        sw->switch_state &= ~(SW_REINIT | SW_REINIT_VIRT);
+        return;
+    }
+}
+
+static void
 c_per_sw_timer(void *arg_sw, void *arg_time)
 {
     c_switch_t          *sw     = arg_sw;
     struct c_worker_ctx *w_ctx  = sw->ctx;
-    uint64_t            time    = *(uint64_t *)arg_time;
-    uint64_t            time_diff;
+    time_t              time    = *(time_t *)arg_time;
+    time_t              time_diff;
     c_per_thread_dat_t  *t_data = &w_ctx->thread_data;
 
-    if (sw->switch_state != SW_REGISTERED) {
-        __of_send_features_request(sw);
+    if (c_switch_is_virtual(sw)) {
+        return c_per_virt_sw_timer(sw, time);
+    }
+
+    /* This condition can occur when 1) Switch was previously marked
+     * as having virtual connection and then due to HA failover, the
+     * connection turned physical. In that case we mark the new 
+     * switch as dead and make the existing virtual switch as physical
+     * NOTE - In this case we make sure not to close the switch's fd.
+     * 2) Switch with same dpid tried to connect and it was denied
+     */ 
+    if (sw->switch_state & SW_DEAD) {
+        c_log_debug("Switch dead dp_id(0x%llx)\n", sw->DPID);
+        sw->conn.dead ? c_conn_destroy(&sw->conn) : c_conn_events_del(&sw->conn);
+        c_worker_do_switch_zap(sw->ctx, sw);
         return;
     }
 
+
+
     time_diff = time - sw->last_refresh_time;
-    if (time_diff > TIME_uS(30)) {
+    if (time_diff > C_SWITCH_IDLE_TIMEO) {
         c_log_debug("Timing out switch_id(0x%llx)\n", sw->DPID);
         t_data->sw_list = g_slist_remove(t_data->sw_list, sw);
         c_worker_do_switch_del(sw->ctx, sw);
 
         return;
-    } else if (time_diff > TIME_uS(10)) {
+    }
+
+    if (!(sw->switch_state & SW_REGISTERED)) {
+        __of_send_features_request(sw);
+        return;
+    }
+
+    if (time_diff > C_SWITCH_ECHO_TIMEO) {
         of_send_echo_request(sw);
     }
 
     if (sw->capabilities & OFPC_FLOW_STATS) {
         time_diff = time - sw->last_sample_time;
 
-        if (time_diff > TIME_uS(5)) {
+        if (time_diff > C_SWITCH_STAT_TIMEO) {
             of_per_switch_flow_stats_scan(sw, time);
         }
     }
@@ -73,9 +125,9 @@ c_per_worker_timer_event(evutil_socket_t fd UNUSED, short event UNUSED,
     struct c_worker_ctx *w_ctx  = arg;
     struct timeval      tv      = { C_PER_WORKER_TIMEO, 0 };
     c_per_thread_dat_t  *t_data = &w_ctx->thread_data;
-    uint64_t            curr_time;
+    time_t              curr_time;
 
-    curr_time = g_get_monotonic_time();
+    curr_time = time(NULL);
     if (t_data->sw_list) {
         g_slist_foreach(t_data->sw_list, c_per_sw_timer, &curr_time); 
     }
@@ -117,7 +169,7 @@ c_worker_ipc_read(evutil_socket_t fd, short event UNUSED, void *arg)
 
     if (c_recvd_sock_dead(ret)) {
         c_log_warn("Thread type %u id %u ipc rd socket:DEAD(%d)", 
-                    cmn_ctx->thread_type, thread_idx,ret);
+                    cmn_ctx->thread_type, thread_idx, ret);
         perror("ipc-socket");
         event_free(C_EVENT(conn->rd_event));
     }
@@ -125,13 +177,13 @@ c_worker_ipc_read(evutil_socket_t fd, short event UNUSED, void *arg)
     return;
 }
 
-static void
+void
 c_thread_write_event(evutil_socket_t fd UNUSED, short events UNUSED, void *arg)
 {
     c_conn_t *conn = arg;
 
     c_wr_lock(&conn->conn_lock);
-    c_socket_write_nonblock_loop(conn, c_write_event_sched);
+    c_socket_write_nonblock_sg_loop(conn, c_write_event_sched);
     c_wr_unlock(&conn->conn_lock);
 }
 
@@ -140,7 +192,7 @@ c_switch_read_nonblock_loop(int fd, void *arg, c_conn_t *conn,
                             const size_t rcv_buf_sz, 
                             conn_proc_t proc_msg )
 {
-    ssize_t             rd_sz = -1;
+    ssize_t             rd_sz = -1, proc_sz = 0;
     struct cbuf         curr_b, *b = NULL;
     int                 loop_cnt = 0;
 
@@ -152,15 +204,7 @@ c_switch_read_nonblock_loop(int fd, void *arg, c_conn_t *conn,
 
     while (1) {
         if (!cbuf_tailroom(b)) {
-            struct cbuf *new;
-
-            new = alloc_cbuf(b->len + rcv_buf_sz);
-            if (b->len) {
-                memcpy(new->data, b->data, b->len);
-                cbuf_put(new, b->len);
-            }
-            free_cbuf(b);
-            b = new;
+            b = cbuf_realloc_tailroom(b, rcv_buf_sz, true);
         }
 
         if (++loop_cnt < 100) {
@@ -176,7 +220,7 @@ c_switch_read_nonblock_loop(int fd, void *arg, c_conn_t *conn,
             break;
         }
 
-        cbuf_put(b, rd_sz);
+        cbuf_put_inline(b, rd_sz);
 
         while (b->len >= sizeof(struct ofp_header) && 
                b->len >= ntohs(((struct ofp_header *)(b->data))->length))  {
@@ -189,15 +233,40 @@ c_switch_read_nonblock_loop(int fd, void *arg, c_conn_t *conn,
             curr_b.data = b->data;
             curr_b.len = ntohs(((struct ofp_header *)(b->data))->length);
             curr_b.tail = b->data + curr_b.len;
+            proc_sz += curr_b.len;
 
             proc_msg(arg, &curr_b);
-            cbuf_pull(b, curr_b.len);
+            cbuf_pull_inline(b, curr_b.len);
 
             c_thread_sg_tx_sync(conn);
         }
+
+        if (likely(proc_sz == rd_sz)) {
+            b->data -= rd_sz;
+            b->tail -= rd_sz;
+        }
+        proc_sz = 0;
     }
 
     return rd_sz;
+}
+
+static void
+c_switch_events_add(c_switch_t *sw)
+{
+    struct c_worker_ctx *wrk_ctx = sw->ctx;
+
+    /* conn fd has to be valid here */
+    sw->conn.rd_event = event_new(wrk_ctx->cmn_ctx.base,
+                                  sw->conn.fd,
+                                  EV_READ|EV_PERSIST,
+                                  c_switch_thread_read, sw);
+    sw->conn.wr_event = event_new(wrk_ctx->cmn_ctx.base,
+                                  sw->conn.fd,
+                                  EV_WRITE, //|EV_PERSIST,
+                                  c_thread_write_event, &sw->conn);
+
+    event_add(C_EVENT(sw->conn.rd_event), NULL);
 }
 
 void __fastpath
@@ -246,12 +315,7 @@ c_worker_do_app_del(struct c_app_ctx *c_app_ctx,
 {
     c_per_thread_dat_t  *t_data = &c_app_ctx->thread_data;
 
-    event_del(C_EVENT(app->app_conn.rd_event));
-    event_del(C_EVENT(app->app_conn.wr_event));
-    event_free(C_EVENT(app->app_conn.rd_event));
-    event_free(C_EVENT(app->app_conn.wr_event));
-    close(app->app_conn.fd);
-
+    c_conn_destroy(&app->app_conn);
     t_data->app_list = g_slist_remove(t_data->app_list, app);
 
     if (!(app->app_flags & C_APP_AUX_REMOTE)) 
@@ -259,22 +323,28 @@ c_worker_do_app_del(struct c_app_ctx *c_app_ctx,
 }
 
 void
-c_worker_do_switch_del(struct c_worker_ctx *c_wrk_ctx, 
+c_worker_do_switch_zap(struct c_worker_ctx *c_wrk_ctx,
                        c_switch_t *sw)
 {
     c_per_thread_dat_t  *t_data = &c_wrk_ctx->thread_data;
 
-    event_del(C_EVENT(sw->conn.rd_event));
-    event_del(C_EVENT(sw->conn.wr_event));
-    event_free(C_EVENT(sw->conn.rd_event));
-    event_free(C_EVENT(sw->conn.wr_event));
-    close(sw->conn.fd);
-
     t_data->sw_list = g_slist_remove(t_data->sw_list, sw);
-
     of_switch_del(sw);
-
     of_switch_put(sw);
+}
+
+void
+c_worker_do_switch_del(struct c_worker_ctx *c_wrk_ctx, 
+                       c_switch_t *sw)
+{
+
+    c_conn_destroy(&sw->conn);
+
+    if (!c_switch_is_virtual(sw)) {
+        c_worker_do_switch_zap(c_wrk_ctx, sw);
+    } else {
+        of_switch_mark_sticky_del(sw);
+    } 
 }
 
 static int
@@ -300,6 +370,7 @@ c_worker_do_app_add(void *ctx_arg, void *msg_arg)
     t_data->app_list = g_slist_append(t_data->app_list, app);
 
     if (msg->aux_conn_valid && msg->aux_conn) {
+        c_log_debug("%s:new aux app", FN);
         c_aux_app_init(app);
     }
 
@@ -324,13 +395,6 @@ c_worker_do_switch_add(void *ctx_arg, void *msg_arg)
     struct c_ipc_thread_msg *msg        = msg_arg;
     c_per_thread_dat_t      *t_data     = &c_wrk_ctx->thread_data;
     c_switch_t              *new_switch;
-    struct sockaddr_in      peer_addr;
-    socklen_t               peer_sz     = sizeof(peer_addr);
-
-    if (getpeername(msg->new_conn_fd, (void *)&peer_addr, &peer_sz) < 0) {
-        c_log_err("get peer failed");
-        return -1;
-    }
 
     if (!msg->new_conn_fd_valid) {
         c_log_err("field invalid indicated");
@@ -342,21 +406,9 @@ c_worker_do_switch_add(void *ctx_arg, void *msg_arg)
     new_switch = of_switch_alloc(c_wrk_ctx);
 
     t_data->sw_list = g_slist_append(t_data->sw_list, new_switch);
-
     new_switch->c_hdl = c_wrk_ctx->cmn_ctx.c_hdl;
-    new_switch->conn.fd =  msg->new_conn_fd;
-    snprintf(new_switch->conn.conn_str, C_CONN_DESC_SZ -1, "%s:%d", 
-             inet_ntoa(peer_addr.sin_addr), ntohs(peer_addr.sin_port));
-    new_switch->conn.rd_event = event_new(c_wrk_ctx->cmn_ctx.base,
-                                     msg->new_conn_fd,
-                                     EV_READ|EV_PERSIST,
-                                     c_switch_thread_read, new_switch);
-    new_switch->conn.wr_event = event_new(c_wrk_ctx->cmn_ctx.base,
-                                     msg->new_conn_fd,
-                                     EV_WRITE, //|EV_PERSIST,
-                                     c_thread_write_event, &new_switch->conn);
-
-    event_add(C_EVENT(new_switch->conn.rd_event), NULL);
+    c_conn_assign_fd(&new_switch->conn, msg->new_conn_fd);
+    c_switch_events_add(new_switch);
 
     of_send_hello(new_switch);
 
@@ -380,7 +432,7 @@ c_worker_event_new_conn(void *ctx_arg, void *msg_arg)
 
 static int
 c_new_conn_to_thread(struct c_main_ctx *m_ctx, int new_conn_fd,
-                     bool sw_conn, bool aux_conn)
+                     c_event_conn_t conn_type, bool aux_conn)
 {
     struct c_ipc_hdr        *ipc_hdr;
     struct c_ipc_thread_msg *ipc_t_msg;
@@ -396,80 +448,85 @@ c_new_conn_to_thread(struct c_main_ctx *m_ctx, int new_conn_fd,
     ipc_t_msg->new_conn_fd = new_conn_fd;
     ipc_t_msg->new_conn_fd_valid = 1;
 
-    if (sw_conn) {
+    switch (conn_type) {
+    case C_EVENT_NEW_SW_CONN:
         thread_idx = c_get_new_switch_worker(m_ctx);
-        ipc_wr_fd  = c_tid_to_ipc_wr_fd(m_ctx, thread_idx); 
-    } else {
-        /* Application connection */
+        ipc_wr_fd  = c_tid_to_ipc_wr_fd(m_ctx, thread_idx);
+        break;
+    case C_EVENT_NEW_APP_CONN:
         thread_idx = c_get_new_app_worker(m_ctx);
         ipc_wr_fd  = c_tid_to_app_ipc_wr_fd(m_ctx, thread_idx);
         if (aux_conn) {
             ipc_t_msg->aux_conn = 1;
             ipc_t_msg->aux_conn_valid = 1;
         }
+        break;
     }
 
     return c_send_unicast_ipc_msg(ipc_wr_fd, ipc_hdr); 
 }
 
-void
-c_accept(evutil_socket_t listener, short event UNUSED, void *arg)
+
+static int
+c_common_accept(evutil_socket_t listener)
 {
-    struct c_main_ctx       *m_ctx = arg;
     struct sockaddr_storage ss;
     socklen_t               slen = sizeof(ss);
     int fd                  = accept(listener, (struct sockaddr*)&ss, &slen);
 
     if (fd < 0) {
         perror("accept");
+        return -1;
     } else if (fd > FD_SETSIZE) {
         close(fd);
+        return -1;
     } else {
         c_make_socket_nonblocking(fd);
-        /* c_sock_set_recvbuf(fd, 3*1024*1024); */
-        c_tcpsock_set_nodelay(fd);
-        c_new_conn_to_thread(m_ctx, fd, true, false);
     }
+
+    return fd;
 }
+
+void
+c_accept(evutil_socket_t listener, short event UNUSED, void *arg)
+{
+    struct c_main_ctx   *m_ctx = arg;
+    int                 fd = 0;
+
+    if ((fd = c_common_accept(listener)) < 0)  {
+        return;
+    }
+
+    c_sock_set_recvbuf(fd, 1*1024*1024);
+    c_sock_set_sndbuf(fd, 3*1024*1024);
+    c_tcpsock_set_nodelay(fd);
+
+    c_new_conn_to_thread(m_ctx, fd, C_EVENT_NEW_SW_CONN, false);
+}
+
 
 void
 c_app_accept(evutil_socket_t listener, short event UNUSED, void *arg)
 {
-    struct c_main_ctx       *m_ctx = arg;
-    struct sockaddr_storage ss;
-    socklen_t               slen = sizeof(ss);
-    int fd                  = accept(listener, (struct sockaddr*)&ss, &slen);
+    struct c_main_ctx   *m_ctx = arg;
+    int                 fd = 0;
 
-    c_log_debug("in app accept thread");
-
-    if (fd < 0) {
-        perror("accept");
-    } else if (fd > FD_SETSIZE) {
-        close(fd);
-    } else {
-        c_make_socket_nonblocking(fd);
-        /* c_sock_set_recvbuf(fd, 384 *1024); */
-        c_new_conn_to_thread(m_ctx, fd, false, false);
+    if ((fd = c_common_accept(listener)) < 0)  {
+        return;
     }
+
+    c_new_conn_to_thread(m_ctx, fd, C_EVENT_NEW_APP_CONN, false);
 }
 
 void
 c_aux_app_accept(evutil_socket_t listener, short event UNUSED, void *arg)
 {
-    struct c_main_ctx       *m_ctx = arg;
-    struct sockaddr_storage ss;
-    socklen_t               slen = sizeof(ss);
-    int fd                  = accept(listener, (struct sockaddr*)&ss, &slen);
+    struct c_main_ctx   *m_ctx = arg;
+    int                 fd = 0;
 
-    c_log_debug("in app accept aux thread");
-
-    if (fd < 0) {
-        perror("accept");
-    } else if (fd > FD_SETSIZE) {
-        close(fd);
-    } else {
-        c_make_socket_nonblocking(fd);
-        /* c_sock_set_recvbuf(fd, 384 *1024); */
-        c_new_conn_to_thread(m_ctx, fd, false, true);
+    if ((fd = c_common_accept(listener)) < 0)  {
+        return;
     }
+
+    c_new_conn_to_thread(m_ctx, fd, C_EVENT_NEW_APP_CONN, true);
 }

@@ -20,6 +20,9 @@
 
 fab_struct_t *fab_ctx;
 
+static void
+fabric_service_handler(void *fab_service, struct cbuf *b);
+
 /** 
  * fab_timer_event -
  *
@@ -46,6 +49,12 @@ static void
 fab_pkt_rcv(void *opq, fab_struct_t *fab_ctx, c_ofp_packet_in_t *pin)
 {
     fab_learn_host(opq, fab_ctx, pin);
+
+    if (pin->fl.dl_type == htons(ETH_TYPE_ARP)) {
+        return fab_arp_rcv(opq, fab_ctx, pin);
+    } else {
+        fab_dhcp_rcv(opq, fab_ctx, pin);
+    }
 }
 
 /** 
@@ -58,15 +67,20 @@ fab_switch_add_notifier(void *opq, fab_struct_t *fab_ctx,
                         c_ofp_switch_add_t *ofp_sa)
 {
     size_t num_port;
-    int i = 0, ret = -1;
+    int i = 0;
     struct ofp_phy_port *port;
+    fab_switch_t *fab_sw;
 
-    c_wr_lock(&fab_ctx->lock);
-    if ((ret = __fab_switch_add(fab_ctx, ntohll(ofp_sa->datapath_id), 
-                         C_GET_ALIAS_IN_SWADD(ofp_sa)))) {
-        c_log_err("%s: Switch(0x%llx) add failed", 
-                  FN, ntohll(ofp_sa->datapath_id));
-        c_wr_unlock(&fab_ctx->lock);
+
+    if (fab_switch_add(fab_ctx, ntohll(ofp_sa->datapath_id),
+                       C_GET_ALIAS_IN_SWADD(ofp_sa))) {
+        c_log_err("%s: Failed", FN);
+        return;
+    }
+
+    fab_sw = fab_switch_get(fab_ctx, ntohll(ofp_sa->datapath_id));
+    if (!fab_sw) {
+        c_log_err("%s: Unexpected error", FN);
         return;
     }
 
@@ -75,41 +89,18 @@ fab_switch_add_notifier(void *opq, fab_struct_t *fab_ctx,
 
     for (i = 0; i < num_port; i++){
         port = &((struct ofp_phy_port *) &(ofp_sa[1]))[i];
-        __fab_port_add(fab_ctx, 
-                       __fab_switch_find(fab_ctx, C_GET_ALIAS_IN_SWADD(ofp_sa)),
-                       ntohs(port->port_no));
+        fab_port_add(fab_ctx, fab_sw, ntohs(port->port_no), 
+                     ntohl(port->config), ntohl(port->state));
+        fab_activate_all_hosts_on_switch_port(fab_ctx, ntohll(ofp_sa->datapath_id),
+                                           ntohs(port->port_no));
     }
 
-    __fab_activate_all_hosts_on_switch(fab_ctx, ntohll(ofp_sa->datapath_id));
+    fab_switch_put(fab_sw);
 
-    c_wr_unlock(&fab_ctx->lock);
+    fab_add_arp_tap_per_switch(opq, ntohll(ofp_sa->datapath_id));
+    fab_add_dhcp_tap_per_switch(opq, ntohll(ofp_sa->datapath_id));
 }
 
-
-/** 
- * fab_switch_delete_notifier -
- *
- * Handler for switch delete/leave event
- */
-void
-fab_switch_delete_notifier(fab_struct_t *fab_ctx, int sw_alias, bool locked)
-{
-    fab_switch_t *sw;
-
-    if (!locked) c_wr_lock(&fab_ctx->lock);
-
-    sw = __fab_switch_find(fab_ctx, sw_alias);
-    if (!sw) {
-        c_log_err("%s: Switch(alias %d) not found", FN, sw_alias);
-        if (!locked) c_wr_unlock(&fab_ctx->lock);
-        return;
-    }
-
-    __fab_delete_all_hosts_on_switch(fab_ctx, sw->dpid);
-    __fab_switch_del(fab_ctx, sw_alias);
-
-    if (!locked) c_wr_unlock(&fab_ctx->lock);
-}
 
 /** 
  * fab_recv_err_msg -
@@ -137,6 +128,9 @@ fab_port_status_handler(void *opq UNUSED, fab_struct_t *fab_ctx,
     uint32_t config, state;
     uint32_t config_mask, state_mask;
     uint16_t port_no;
+    uint64_t dpid = ntohll(port_stat->datapath_id);
+    int sw_alias = ntohl(port_stat->sw_alias);
+    fab_switch_t *sw;
 
     port_no = ntohs(port_stat->desc.port_no);
     if (port_no > OFPP_MAX){
@@ -149,39 +143,52 @@ fab_port_status_handler(void *opq UNUSED, fab_struct_t *fab_ctx,
     state = ntohl(port_stat->desc.state);
     state_mask = ntohl(port_stat->state_mask);
 
-    c_log_debug("%s: Port %hu admin %s link %s\n", FN, port_no,
+    c_log_debug("%s: switch 0x%llx Port %hu admin %s link %s\n",
+                FN, (unsigned long long)dpid, port_no,
                 (config & OFPPC_PORT_DOWN)? "down": "up",
                 (state & OFPPS_LINK_DOWN)? "down" : "up");
+
+    sw = fab_switch_get(fab_ctx, dpid);
+    if (!sw) {
+        c_log_err("%s: No such switch", FN);
+        return;
+    }
 
     switch (port_stat->reason){
     case OFPPR_ADD:
         /* We can aggresively timeout the existing routes or recalc routes
           and compare based on which old and inferior routes can be deleted */
-        c_wr_lock(&fab_ctx->lock);
-        __fab_port_add(fab_ctx,
-                       __fab_switch_find(fab_ctx, ntohl(port_stat->sw_alias)),
-                       port_no);
-        c_wr_unlock(&fab_ctx->lock);
+
+        c_log_debug("%s: switch %llx port %hu ->ADD", 
+                    FN, (unsigned long long)dpid, port_no);
+        fab_port_add(fab_ctx, sw, port_no, config, state);
+        fab_activate_all_hosts_on_switch_port(fab_ctx, dpid, port_no);
         break;
     case OFPPR_MODIFY:
-        if ((config_mask & OFPPC_PORT_DOWN)||
-            (state_mask & OFPPS_LINK_DOWN)) {
+        fab_port_update(fab_ctx, sw, port_no, config, state);
+        if (config_mask & OFPPC_PORT_DOWN || state_mask & OFPPS_LINK_DOWN) {
             if (!(config & OFPPC_PORT_DOWN) && !(state & OFPPS_LINK_DOWN)) {
                 fab_ctx->rt_scan_all_pending = true;
-                break;
+            } else {
+                c_log_debug("%s: switch %llx port %hu ->DOWN",
+                            FN, (unsigned long long)dpid, port_no);
+                fab_delete_routes_with_port(fab_ctx, sw_alias, port_no);
             }
-        } else break;
-        /* Fall through */
+        }
+        break;
     case OFPPR_DELETE:
-        c_log_debug("%s: %hu ->DOWN", FN, port_no);
-        fab_delete_routes_with_port(fab_ctx,
-                                    (int) ntohl(port_stat->sw_alias),
-                                    port_no);
+        c_log_debug("%s: switch 0x%llx port %hu ->DELETE",
+                    FN, (unsigned long long)dpid, port_no);
+        fab_port_delete(fab_ctx, sw, port_no);
+        fab_delete_routes_with_port(fab_ctx, sw_alias, port_no);
         break;
     default:
         c_log_err("%s: unknown reason %d", FN, port_stat->reason);
         break;
     }
+
+    fab_switch_put(sw);
+    return;
 }
 
 /**
@@ -209,7 +216,7 @@ fab_event_notifier(void *opq, void *pkt_arg)
     case C_OFPT_SWITCH_DELETE:
         {
             c_ofp_switch_delete_t *ofp_sd = (void *)(hdr);
-            fab_switch_delete_notifier(fab_ctx, ntohl(ofp_sd->sw_alias), false);
+            fab_switch_del(fab_ctx, ntohll(ofp_sd->datapath_id));
             fab_reset_all_routes(fab_ctx);
             break;
         }
@@ -227,12 +234,15 @@ fab_event_notifier(void *opq, void *pkt_arg)
         mul_register_app(NULL, FAB_APP_NAME,
                      C_APP_ALL_SW, C_APP_ALL_EVENTS,
                      0, NULL, fab_event_notifier);
+
+        /* FIXME - Get cli config by singalling reconnect */
         break;
     case C_OFPT_NOCONN_APP:
-        fab_switches_reset(fab_ctx, __fab_delete_all_hosts_on_switch);
+        /* Do nothing */
         break;
     case C_OFPT_ERR_MSG:
         fab_recv_err_msg(fab_ctx, (void *)hdr);    
+        break;
     default:
         return;
     }
@@ -295,15 +305,17 @@ fabric_put_route_elem(void *rt_arg, void *u_arg)
 {
     struct c_ofp_route_link *cofp_rl = *(struct c_ofp_route_link **)(u_arg);
     rt_path_elem_t *rt_elem = rt_arg;
-    fab_switch_t *fab_sw;
+    fab_switch_t *fab_sw = NULL;
 
-    fab_sw = __fab_switch_find(fab_ctx, rt_elem->sw_alias);
+    fab_sw = fab_switch_get_with_alias(fab_ctx, rt_elem->sw_alias);
     if (!fab_sw) {
         /* We cant fail here so pretend */
         cofp_rl->datapath_id = 0;
     } else {
         cofp_rl->datapath_id = htonll(fab_sw->dpid);
     }
+
+    if (fab_sw) fab_switch_put(fab_sw);
 
     cofp_rl->src_link = htons(rt_elem->link.la);
     cofp_rl->dst_link = htons(rt_elem->link.lb);
@@ -374,25 +386,30 @@ fabric_service_show_routes(void *fab_service)
 /**
  * fabric_service_send_host_info -
  */
-static void
+void
 fabric_service_send_host_info(void *host, void *v_arg UNUSED,
-                              void *fab_service)
+                              void *iter_arg)
 {
     struct c_ofp_host_mod *cofp_hm;
     struct c_ofp_auxapp_cmd *cofp_aac;
     struct cbuf *b;
     uint64_t dpid = 0;
-
+	struct fab_host_service_arg *serv_send_arg = iter_arg;
 
     b = of_prep_msg(sizeof(*cofp_aac) + sizeof(*cofp_hm), C_OFPT_AUX_CMD, 0);
     cofp_aac = (void *)(b->data);
-    cofp_aac->cmd_code = htonl(C_AUX_CMD_FAB_HOST_ADD);
+	if (serv_send_arg->add) { 
+    	cofp_aac->cmd_code = htonl(C_AUX_CMD_FAB_HOST_ADD);
+	} else {
+    	cofp_aac->cmd_code = htonl(C_AUX_CMD_FAB_HOST_DEL);
+	}
     cofp_hm = (void *)(cofp_aac->data);
 
     fab_dump_single_host_to_flow(host, &cofp_hm->host_flow, &dpid);
     cofp_hm->switch_id.datapath_id = htonll(dpid);
 
-    c_service_send(fab_service, b);
+	assert(serv_send_arg->send_cb);
+	serv_send_arg->send_cb(serv_send_arg->serv, b);
 }
 
 /**
@@ -403,11 +420,12 @@ fabric_service_send_host_info(void *host, void *v_arg UNUSED,
 static void
 fabric_service_show_hosts(void *fab_service, bool active)
 {
+	struct fab_host_service_arg iter_arg = { true, fab_service, c_service_send };
     if (active) {
-        fab_loop_all_hosts(fab_ctx, fabric_service_send_host_info, fab_service);
+        fab_loop_all_hosts(fab_ctx, fabric_service_send_host_info, &iter_arg); 
     } else {
         fab_loop_all_inactive_hosts(fab_ctx, fabric_service_send_host_info,
-                                    fab_service);
+                                    &iter_arg);
     }
 
     return fabric_service_success(fab_service); 
@@ -425,12 +443,14 @@ fabric_service_host_mod(void *fab_service, struct cbuf *b,
 {
     int ret = -1;
     struct c_ofp_host_mod *cofp_hm;
+    
+    c_log_debug("%s: %s", FN, add ? "add": "del");
 
     if (ntohs(cofp_aac->header.length) < 
               sizeof(*cofp_aac) + sizeof(*cofp_hm)) {
-        c_log_err("%s: Size err (%u) of (%u)", FN,
-                  ntohs(cofp_aac->header.length),
-                  sizeof(*cofp_aac) + sizeof(*cofp_hm));
+        c_log_err("%s: Size err (%lu) of (%lu)", FN,
+                  (unsigned long)ntohs(cofp_aac->header.length),
+                  (unsigned long)(sizeof(*cofp_aac) + sizeof(*cofp_hm)));
         goto err;
     }
 
@@ -438,9 +458,9 @@ fabric_service_host_mod(void *fab_service, struct cbuf *b,
 
     if (add) {
         ret = fab_host_add(fab_ctx, ntohll(cofp_hm->switch_id.datapath_id),
-                           &cofp_hm->host_flow);
+                           &cofp_hm->host_flow, true);
     } else {
-        ret = fab_host_delete(fab_ctx, &cofp_hm->host_flow, NULL, NULL);     
+        ret = fab_host_delete(fab_ctx, &cofp_hm->host_flow, false, false, true);
                            
     }
 
@@ -464,9 +484,9 @@ fabric_service_handler(void *fab_service, struct cbuf *b)
     struct c_ofp_auxapp_cmd *cofp_aac = (void *)(b->data);
 
     if (ntohs(cofp_aac->header.length) < sizeof(struct c_ofp_auxapp_cmd)) {
-        c_log_err("%s: Size err (%u) of (%u)", FN,
-                  ntohs(cofp_aac->header.length),
-                  sizeof(struct c_ofp_auxapp_cmd));
+        c_log_err("%s: Size err (%lu) of (%lu)", FN,
+                  (unsigned long)ntohs(cofp_aac->header.length),
+                  (unsigned long)(sizeof(struct c_ofp_auxapp_cmd)));
         return fabric_service_error(fab_service, b, OFPET_BAD_REQUEST,
                                     OFPBRC_BAD_LEN);
     }
@@ -509,8 +529,6 @@ fabric_module_init(void *base_arg)
     fab_ctx->base = base;
     c_rw_lock_init(&fab_ctx->lock);
 
-    fab_switches_init(fab_ctx);
-
     fab_ctx->host_htbl = g_hash_table_new_full(fab_host_hash_func,
                                                fab_host_equal_func,
                                                NULL, __fab_host_delete);
@@ -523,8 +541,10 @@ fabric_module_init(void *base_arg)
 
     fab_ctx->tenant_net_htbl = g_hash_table_new_full(fab_tenant_nw_hash_func,
                                                  fab_tenant_nw_equal_func,
-                                                 NULL, __fab_tenant_nw_delete);
+                                                 NULL, NULL);
     assert(fab_ctx->tenant_net_htbl);
+
+    fab_switches_init(fab_ctx);
 
     fab_ctx->fab_timer_event = evtimer_new(base,
                                            fab_timer_event,
@@ -534,7 +554,7 @@ fabric_module_init(void *base_arg)
                                                       fabric_service_handler);
     assert(fab_ctx->fab_cli_service);
 
-    fab_ctx->route_service = mul_app_get_service(MUL_ROUTE_SERVICE_NAME);
+    fab_ctx->route_service = mul_app_get_service(MUL_ROUTE_SERVICE_NAME, NULL);
     assert(fab_ctx->route_service);
 
     evtimer_add(fab_ctx->fab_timer_event, &tv);

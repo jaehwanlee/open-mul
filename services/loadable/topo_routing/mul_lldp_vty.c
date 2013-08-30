@@ -94,11 +94,11 @@ show_lldp_port_info(void *key UNUSED, void *sw_arg, void *uarg)
 		other_dpid = port->neighbor_dpid;
 		other_portid = port->neighbor_port;
 		/* port #, Status, Neighbor Switch ID, Neighbor Switch Port */
-		vty_out (vty,"%12u | %10s | %10llu | %u%s",port_no,status_str,(unsigned long long)other_dpid,other_portid,VTY_NEWLINE);
+		vty_out (vty,"%12u | %10s | 0x%10llx | %u%s",port_no,status_str,(unsigned long long)other_dpid,other_portid,VTY_NEWLINE);
 	}
 	else {
 		/* port #, Status */
-		vty_out (vty,"%12u | %10s | %10s | %s%s",port_no,status_str,"","",VTY_NEWLINE);
+		vty_out (vty,"%12u | %10s | 0x%10s | %s%s",port_no,status_str,"","",VTY_NEWLINE);
 	}
 }
 

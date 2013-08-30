@@ -22,14 +22,15 @@
 #include "mul_services.h"
 
 struct c_app_service {
+   char app_name[MAX_SERV_NAME_LEN];
    char service_name[MAX_SERV_NAME_LEN];
    uint16_t  port;
    void * (*service_priv_init)(void); 
 }c_app_service_tbl[] = {
-    { MUL_TR_SERVICE_NAME, MUL_TR_SERVICE_PORT, NULL },    
-    { MUL_ROUTE_SERVICE_NAME, 0, mul_route_service_get },
-    { MUL_CORE_SERVICE_NAME, C_AUX_APP_PORT, NULL },
-    { MUL_FAB_CLI_SERVICE_NAME, MUL_FAB_CLI_PORT, NULL }
+    { TR_APP_NAME, MUL_TR_SERVICE_NAME, MUL_TR_SERVICE_PORT, NULL },    
+    { "MISC", MUL_ROUTE_SERVICE_NAME, 0, mul_route_service_get },
+    { "CORE", MUL_CORE_SERVICE_NAME, C_AUX_APP_PORT, NULL },
+    { FAB_APP_NAME, MUL_FAB_CLI_SERVICE_NAME, MUL_FAB_CLI_PORT, NULL }
 };
 
 static int c_app_sock_init(c_app_hdl_t *hdl, char *server);
@@ -52,7 +53,7 @@ usage(char *progname, int status)
 {
     printf("%s Options:\n", progname);
     printf("-d : Daemon Mode\n");
-    printf("-s <server-ip> : Server ip address to connect\n");
+    printf("-s <server-ip> : Controller server ip address to connect\n");
     printf("-V <vty-port> : vty port address. (enables vty shell)\n");
     printf("-h : Help\n");
 
@@ -233,7 +234,7 @@ mul_register_app(void *app_arg UNUSED, char *app_name, uint32_t app_flags,
     reg_app->dpid = htonl(n_dpid);
 
     p_dpid = (void *)(reg_app+1);
-    for (; idx < n_dpid; idx++) {
+    for (idx = 0; idx < n_dpid; idx++) {
         *p_dpid++ = *dpid_list++;
     }
 
@@ -465,7 +466,7 @@ mul_app_create_service(char *name,
         serv = &c_app_service_tbl[serv_id];
         if (!strncmp(serv->service_name, name, MAX_SERV_NAME_LEN-1)) {
             return mul_service_start(c_app_main_hdl.base, name, serv->port, 
-                                     service_handler);
+                                     service_handler, NULL);
         }
     }
 
@@ -477,7 +478,7 @@ static void *
 __mul_app_get_service(char *name,
                       void (*conn_update)(void *service,
                                           unsigned char conn_event),
-                      bool retry_conn)
+                      bool retry_conn, const char *server)
 {
     size_t serv_sz = sizeof(c_app_service_tbl)/sizeof(c_app_service_tbl[0]);
     int serv_id = 0;
@@ -492,8 +493,8 @@ __mul_app_get_service(char *name,
             else 
                 service = mul_service_instantiate(c_app_main_hdl.base, name, 
                                                   serv_elem->port,
-                                                  conn_update,
-                                                  retry_conn);
+                                                  conn_update, NULL,
+                                                  retry_conn, server);
             return service;
         }
     }
@@ -503,18 +504,19 @@ __mul_app_get_service(char *name,
 }
 
 void *
-mul_app_get_service(char *name)
+mul_app_get_service(char *name, const char *server)
 {
-    return __mul_app_get_service(name, NULL, false);
+    return __mul_app_get_service(name, NULL, false, server);
 }
  
 void *
 mul_app_get_service_notify(char *name,
                           void (*conn_update)(void *service,
                                               unsigned char conn_event),
-                          bool retry_conn)
+                          bool retry_conn,
+                          const char *server)
 {
-    return __mul_app_get_service(name, conn_update, retry_conn);
+    return __mul_app_get_service(name, conn_update, retry_conn, server);
 }
  
 
@@ -595,12 +597,18 @@ main(int argc, char **argv)
     int     daemon_mode = 0;
     int     vty_shell = 0;
     uint16_t vty_port = 0;
+    char    app_pid_path[C_APP_PATH_LEN];
+    struct in_addr in_addr;
 
     /* Set umask before anything for security */
     umask (0027);
 
     /* Get program name. */
     c_app_main_hdl.progname = ((p = strrchr (argv[0], '/')) ? ++p : argv[0]);
+
+    strncpy(app_pid_path, C_APP_PID_COMMON_PATH, C_APP_PATH_LEN - 1);
+    strncat(app_pid_path, c_app_main_hdl.progname, 
+            C_APP_PATH_LEN - strlen(app_pid_path) - 1);
 
     /* Command line option parse. */
     while (1) {
@@ -618,6 +626,10 @@ main(int argc, char **argv)
             break;
         case 's': 
             server = optarg;
+            if (!inet_aton(server, &in_addr)) {
+                printf("Invalid Director address");
+                exit(0);
+            }
             break;
         case 'V':
             vty_shell = 1;
@@ -631,6 +643,8 @@ main(int argc, char **argv)
             break;
         }
     }
+
+    c_pid_output(app_pid_path);
 
     if (daemon_mode) {
         c_daemon(1, 0);

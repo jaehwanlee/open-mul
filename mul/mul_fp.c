@@ -188,7 +188,6 @@ c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len,
                                  &op_act, sizeof(op_act), 60, 0, 
                                  htonl(OFPFW_ALL & ~(OFPFW_DL_DST)), 
                                  C_FL_PRIO_DFL);
-
         if (opi->buffer_id != (uint32_t)(-1)) {
             c_wr_unlock(&sw->lock);
             return 0;    
@@ -204,7 +203,7 @@ c_l2_lrn_fwd(c_switch_t *sw, struct cbuf *b UNUSED, void *data, size_t pkt_len,
     parms.data = data;
     parms.data_len = parms.buffer_id == (uint32_t)(-1)? 0 : pkt_len;
 
-    of_send_pkt_out(sw, &parms);
+    of_send_pkt_out_inline(sw, &parms);
 
     return 0;
 }

@@ -20,6 +20,7 @@
 #define __LOCK_H__
 
 #include <pthread.h>
+#include "compiler.h"
 
 typedef pthread_mutex_t  c_mutex_lock_t;
 typedef pthread_rwlock_t c_rw_lock_t;

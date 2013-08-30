@@ -19,8 +19,6 @@
 #ifndef __L2SW_H__
 #define __L2SW_H__
 
-#define L2SW_APP_NAME "mul-l2sw"
-
 #define L2FDB_ITIMEO_DFL (60) 
 #define L2FDB_HTIMEO_DFL (0) 
 

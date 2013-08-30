@@ -23,8 +23,8 @@
 #include "mul_common.h"
 #include "mul_vty.h"
 #include "mul_fabric_servlet.h"
+#include "mul_nbapi.h"
 
-#define CLI_APP_NAME "mul-cli"
 #define CLI_CONF_FILE "mulcli.conf"
 
 #define CLI_TIMER_TS  (2)
@@ -55,6 +55,9 @@ struct cli_struct {
     mul_service_t *mul_service; /* Traffic-Routing Service Instance */
     mul_service_t *tr_service; /* Traffic-Routing Service Instance */
     mul_service_t *fab_service; /* Fabric Service Instance */
+
+    uint32_t      sysid;
+    uint32_t      state;
 };
 typedef struct cli_struct cli_struct_t;
 

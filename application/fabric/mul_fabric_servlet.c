@@ -40,7 +40,7 @@ fab_dump_add_host_cmd_from_flow(uint64_t dpid, struct flow *fl)
                     fl->dl_src[0], fl->dl_src[1],
                     fl->dl_src[2], fl->dl_src[3],
                     fl->dl_src[4], fl->dl_src[5],
-                    dpid,
+                    (unsigned long long)dpid,
                     ntohs(fl->in_port),
                     fl->FL_DFL_GW ? "gw" : "non-gw");
     assert(len < HOST_PBUF_SZ-1);
@@ -77,7 +77,8 @@ mul_fabric_route_link_dump(struct c_ofp_route_link *rl, size_t n_links)
     for (; i < n_links; i++) {
         len += snprintf(pbuf+len, FAB_DFL_PBUF_SZ-len-1,
                         "Node(0x%llx):Link(%hu)",
-                        ntohll(rl->datapath_id), ntohs(rl->src_link));
+                        (unsigned long long)(ntohll(rl->datapath_id)),
+                        ntohs(rl->src_link));
         if (len >= FAB_DFL_PBUF_SZ-1) {
             c_log_err("%s: print buf overrun", FN);
             free(pbuf);
@@ -100,6 +101,8 @@ mul_fabric_host_mod(void *service, uint64_t dpid, struct flow *fl, bool add)
     struct c_ofp_auxapp_cmd *cofp_auc;
     struct c_ofp_host_mod *cofp_hm;
     int ret = -1;
+
+    if (!service) return ret;
 
     b = of_prep_msg(sizeof(struct c_ofp_auxapp_cmd) +
                     sizeof(struct c_ofp_host_mod),
@@ -131,12 +134,14 @@ mul_fabric_host_mod(void *service, uint64_t dpid, struct flow *fl, bool add)
  */
 void
 mul_fabric_show_hosts(void *service, bool active, bool dump_cmd,
-                      void *arg, void (*cb_fn)(void *arg, char *pbuf))
+                      void *arg, void (*cb_fn)(void *arg, void *pbuf))
 {
     struct cbuf *b;
     struct c_ofp_auxapp_cmd *cofp_auc;
     struct c_ofp_host_mod *cofp_hm;
     char *pbuf;
+
+    if (!service) return;
 
     b = of_prep_msg(sizeof(struct c_ofp_auxapp_cmd),
                     C_OFPT_AUX_CMD, 0);
@@ -202,6 +207,8 @@ mul_fabric_show_routes(void *service,
     struct c_ofp_route_link *cofp_rl;
     char *pbuf;
     size_t n_links = 0;
+
+    if (!service) return;
 
     b = of_prep_msg(sizeof(struct c_ofp_auxapp_cmd),
                     C_OFPT_AUX_CMD, 0);

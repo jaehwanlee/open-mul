@@ -390,7 +390,7 @@ tr_event_notifier(void *app_arg, void *pkt_arg)
 		break;
 	}
 	case C_OFPT_RECONN_APP:
-		mul_register_app(NULL, MUL_TR_SERVICE_NAME, C_APP_ALL_SW, C_APP_ALL_EVENTS,
+		mul_register_app(NULL, TR_APP_NAME, C_APP_ALL_SW, C_APP_ALL_EVENTS,
                          0, NULL, tr_event_notifier);
 		break;
 	case C_OFPT_NOCONN_APP:
@@ -441,7 +441,7 @@ tr_module_init(void *ctx)
         /* We can still continue albeit with some limited ability */
     }
 
-    mul_register_app(NULL, MUL_TR_SERVICE_NAME, C_APP_ALL_SW, C_APP_ALL_EVENTS,
+    mul_register_app(NULL, TR_APP_NAME, C_APP_ALL_SW, C_APP_ALL_EVENTS,
                      0, NULL, tr_event_notifier);
 }
 
