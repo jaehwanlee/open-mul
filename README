@@ -1,4 +1,11 @@
- How to build MUL Controller on Ubuntu ?
+* How to get MuL code ?
+
+1) Clone latest repo using git :
+
+   git clone git://git.code.sf.net/p/mul/code mul-code
+
+
+* How to build MuL Controller on Ubuntu ?
 
 1. Get necessary packages 
 
