@@ -300,6 +300,8 @@ of_switch_del(c_switch_t *sw)
     struct c_cmn_ctx *cmn_ctx = sw->ctx;
     ctrl_hdl_t *ctrl          = cmn_ctx->c_hdl;
 
+    c_conn_destroy(&sw->conn);
+
     c_wr_lock(&ctrl->lock);
     if (ctrl->sw_hash_tbl) {
        g_hash_table_remove(ctrl->sw_hash_tbl, sw);
@@ -310,11 +312,6 @@ of_switch_del(c_switch_t *sw)
             ipool_put(ctrl->sw_ipool, sw->alias_id);
     }
     c_wr_unlock(&ctrl->lock);
-
-    if (sw->conn.cbuf) {
-        free_cbuf(sw->conn.cbuf);
-        sw->conn.cbuf = NULL;
-    }
 
     if (sw->switch_state & SW_REGISTERED)
         c_signal_app_event(sw, NULL, C_DP_UNREG, NULL, NULL);
