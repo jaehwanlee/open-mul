@@ -357,7 +357,7 @@ mul_register_app(void *app_arg, char *app_name, uint32_t app_flags,
             dpid = calloc(1, sizeof(uint64_t)); // Optimize ??   
             assert(dpid);
 
-            *dpid = dpid_list[n]; 
+            *dpid = ntohll(dpid_list[n]);
             g_hash_table_insert(app->dpid_hlist, dpid, dpid);
 
             if ((sw = __of_switch_get(&ctrl_hdl, *dpid))) {
