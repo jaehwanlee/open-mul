@@ -274,6 +274,8 @@ c_switch_replay_all(ctrl_hdl_t *hdl, void *app_arg)
     GSList *iterator;            
     struct c_sw_replay_q_ent *q_ent;
     GSList *app_replay_q = NULL;
+    c_app_info_t *app = app_arg;
+
     c_rd_lock(&hdl->lock);
     
     if (hdl->sw_hash_tbl) {
@@ -286,7 +288,9 @@ c_switch_replay_all(ctrl_hdl_t *hdl, void *app_arg)
                           
     for (iterator = app_replay_q; iterator; iterator = iterator->next) {
         q_ent = iterator->data;
-        c_signal_app_event(q_ent->sw, q_ent->b, C_DP_REG, app_arg, NULL);
+        if (g_hash_table_lookup(app->dpid_hlist, &(q_ent->sw->DPID))) {
+            c_signal_app_event(q_ent->sw, q_ent->b, C_DP_REG, app_arg, NULL);
+        }
         of_switch_put(q_ent->sw);
     }
 
